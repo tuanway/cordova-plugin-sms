@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<plugin
+  id="com.cordova.sms"
+  version="0.1.0"
+  xmlns="http://apache.org/cordova/ns/plugins/1.0"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+  <name>SMS</name>
+  <description>Android Cordova plugin for SMS and MMS device access, search, contacts, attachments, background watch, SIM-aware sends, and thread mutations.</description>
+  <license>UNLICENSED</license>
+
+  <engines>
+    <engine name="cordova" version=">=10.0.0" />
+  </engines>
+
+  <js-module src="www/sms.js" name="sms">
+    <clobbers target="cordova.plugins.sms" />
+  </js-module>
+
+  <platform name="android">
+    <config-file target="res/xml/config.xml" parent="/*">
+      <feature name="Sms">
+        <param name="android-package" value="com.cordova.sms.Sms" />
+      </feature>
+    </config-file>
+
+    <config-file target="AndroidManifest.xml" parent="/manifest">
+      <uses-permission android:name="android.permission.READ_SMS" />
+      <uses-permission android:name="android.permission.RECEIVE_SMS" />
+      <uses-permission android:name="android.permission.RECEIVE_MMS" />
+      <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+      <uses-permission android:name="android.permission.SEND_SMS" />
+      <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+      <uses-permission android:name="android.permission.READ_CONTACTS" />
+      <uses-permission android:name="android.permission.WRITE_SMS" />
+      <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    </config-file>
+
+    <config-file target="AndroidManifest.xml" parent="/manifest/application">
+      <receiver android:name="com.cordova.sms.SmsReceiver" android:exported="true">
+        <intent-filter>
+          <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+        </intent-filter>
+        <intent-filter>
+          <action android:name="android.provider.Telephony.WAP_PUSH_RECEIVED" />
+          <data android:mimeType="application/vnd.wap.mms-message" />
+        </intent-filter>
+        <intent-filter>
+          <action android:name="com.cordova.sms.SMS_SENT" />
+          <action android:name="com.cordova.sms.SMS_DELIVERED" />
+          <action android:name="com.cordova.sms.MMS_SENT" />
+        </intent-filter>
+      </receiver>
+      <receiver android:name="com.cordova.sms.SmsBootReceiver" android:enabled="true" android:exported="true">
+        <intent-filter>
+          <action android:name="android.intent.action.BOOT_COMPLETED" />
+          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        </intent-filter>
+      </receiver>
+      <service android:name="com.cordova.sms.SmsWatchService" android:exported="false" android:foregroundServiceType="dataSync" />
+    </config-file>
+
+    <source-file src="src/android/Sms.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/SmsReceiver.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/SmsBootReceiver.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/SmsWatchService.java" target-dir="src/com/cordova/sms" />
+  </platform>
+</plugin>

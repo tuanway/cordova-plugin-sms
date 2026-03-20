@@ -1,0 +1,25 @@
+{
+  "name": "cordova-plugin-sms-device",
+  "version": "0.1.0",
+  "description": "Android Cordova plugin for SMS and MMS device access, search, contacts, attachments, background watch, SIM-aware sends, and thread mutations.",
+  "cordova": {
+    "id": "com.cordova.sms",
+    "platforms": [
+      "android"
+    ]
+  },
+  "engines": [
+    {
+      "name": "cordova",
+      "version": ">=10.0.0"
+    }
+  ],
+  "keywords": [
+    "cordova",
+    "sms",
+    "mms",
+    "android",
+    "messages"
+  ],
+  "license": "UNLICENSED"
+}
