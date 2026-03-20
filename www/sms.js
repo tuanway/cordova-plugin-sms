@@ -1,4 +1,3 @@
-cordova.define("com.cordova.sms.sms", function(require, exports, module) {
   var exec;
   var eventHandlers;
   var isWatching;
@@ -391,4 +390,3 @@ cordova.define("com.cordova.sms.sms", function(require, exports, module) {
       exec(normalized.success, normalized.error, "Sms", "setThreadSettings", [normalized.options]);
     }
   };
-});
