@@ -1868,6 +1868,10 @@ public class Sms extends CordovaPlugin {
   }
 
   private JSONArray queryMessages(JSONObject options) throws JSONException {
+    if (canUseProviderPagedKindQuery(options)) {
+      return toJsonArray(queryProviderPagedMessageItems(options));
+    }
+
     return toJsonArray(applyPaging(queryMessageItems(options), options));
   }
 
@@ -1889,6 +1893,67 @@ public class Sms extends CordovaPlugin {
     filterMessageItems(items, options);
     sortMessages(items, order);
     return items;
+  }
+
+  private List<JSONObject> queryProviderPagedMessageItems(JSONObject options) throws JSONException {
+    ArrayList<JSONObject> items;
+    long threadId;
+    String order;
+    String kind;
+
+    threadId = parseThreadId(options);
+    order = safeString(options.opt("order"));
+    kind = safeString(options.opt("kind"));
+    if (TextUtils.isEmpty(order)) {
+      order = "asc";
+    }
+
+    items = new ArrayList<JSONObject>();
+    if ("sms".equals(kind)) {
+      items.addAll(querySmsMessages(threadId, options));
+    } else if ("mms".equals(kind)) {
+      items.addAll(queryMmsMessages(threadId, options));
+    } else {
+      return applyPaging(queryMessageItems(options), options);
+    }
+
+    filterMessageItems(items, options);
+    sortMessages(items, order);
+    return items;
+  }
+
+  private boolean canUseProviderPagedKindQuery(JSONObject options) {
+    String kind;
+
+    kind = safeString(options.opt("kind"));
+    if (!"sms".equals(kind) && !"mms".equals(kind)) {
+      return false;
+    }
+
+    if (!TextUtils.isEmpty(normalizeSearch(options.optString("search")))) {
+      return false;
+    }
+
+    if (options.optLong("dateFrom", 0L) > 0L || options.optLong("dateTo", 0L) > 0L) {
+      return false;
+    }
+
+    if (options.optBoolean("unreadOnly", false)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private String getProviderMessageSortOrder(JSONObject options) {
+    String order;
+
+    order = safeString(options.opt("order"));
+    if ("desc".equalsIgnoreCase(order)) {
+      return "date DESC";
+    }
+
+    return "date ASC";
   }
 
   private JSONObject buildThreadDetails(String threadKey, JSONObject options) throws JSONException {
@@ -2181,16 +2246,26 @@ public class Sms extends CordovaPlugin {
   }
 
   private ArrayList<JSONObject> querySmsMessages(long threadId) throws JSONException {
+    return querySmsMessages(threadId, null);
+  }
+
+  private ArrayList<JSONObject> querySmsMessages(long threadId, JSONObject options) throws JSONException {
     ContentResolver resolver;
     Cursor cursor;
     ArrayList<JSONObject> messages;
     String selection;
     String[] selectionArgs;
+    int offset;
+    int limit;
+    int skipped;
 
     resolver = cordova.getActivity().getContentResolver();
     messages = new ArrayList<JSONObject>();
     selection = null;
     selectionArgs = null;
+    offset = options == null ? 0 : Math.max(0, options.optInt("offset", 0));
+    limit = options == null ? 0 : Math.max(0, options.optInt("limit", 0));
+    skipped = 0;
 
     if (threadId > 0) {
       selection = "thread_id = ?";
@@ -2202,7 +2277,7 @@ public class Sms extends CordovaPlugin {
       new String[] { "_id", "thread_id", "address", "body", "date", "date_sent", "type", "read", "status" },
       selection,
       selectionArgs,
-      "date DESC"
+      getProviderMessageSortOrder(options == null ? new JSONObject() : options)
     );
 
     if (cursor == null) {
@@ -2213,8 +2288,16 @@ public class Sms extends CordovaPlugin {
       while (cursor.moveToNext()) {
         JSONObject row;
 
+        if (skipped < offset) {
+          skipped++;
+          continue;
+        }
+
         row = buildSmsRow(cursor);
         messages.add(row);
+        if (limit > 0 && messages.size() >= limit) {
+          break;
+        }
       }
     } finally {
       cursor.close();
@@ -2224,16 +2307,26 @@ public class Sms extends CordovaPlugin {
   }
 
   private ArrayList<JSONObject> queryMmsMessages(long threadId) throws JSONException {
+    return queryMmsMessages(threadId, null);
+  }
+
+  private ArrayList<JSONObject> queryMmsMessages(long threadId, JSONObject options) throws JSONException {
     ContentResolver resolver;
     Cursor cursor;
     ArrayList<JSONObject> messages;
     String selection;
     String[] selectionArgs;
+    int offset;
+    int limit;
+    int skipped;
 
     resolver = cordova.getActivity().getContentResolver();
     messages = new ArrayList<JSONObject>();
     selection = null;
     selectionArgs = null;
+    offset = options == null ? 0 : Math.max(0, options.optInt("offset", 0));
+    limit = options == null ? 0 : Math.max(0, options.optInt("limit", 0));
+    skipped = 0;
 
     if (threadId > 0) {
       selection = "thread_id = ?";
@@ -2245,7 +2338,7 @@ public class Sms extends CordovaPlugin {
       new String[] { "_id", "thread_id", "date", "date_sent", "msg_box", "read", "sub" },
       selection,
       selectionArgs,
-      "date DESC"
+      getProviderMessageSortOrder(options == null ? new JSONObject() : options)
     );
 
     if (cursor == null) {
@@ -2256,8 +2349,16 @@ public class Sms extends CordovaPlugin {
       while (cursor.moveToNext()) {
         JSONObject row;
 
+        if (skipped < offset) {
+          skipped++;
+          continue;
+        }
+
         row = buildMmsRow(cursor);
         messages.add(row);
+        if (limit > 0 && messages.size() >= limit) {
+          break;
+        }
       }
     } finally {
       cursor.close();
