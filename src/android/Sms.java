@@ -3277,7 +3277,7 @@ public class Sms extends CordovaPlugin {
     result.put("providerId", draftId);
     result.put("threadKey", String.valueOf(threadId));
     result.put("address", recipients.get(0));
-    result.put("recipients", toJsonArray(recipients));
+    result.put("recipients", toStringJsonArray(recipients));
     result.put("body", message);
     result.put("date", values.getAsLong("date"));
     result.put("draft", true);
@@ -3906,7 +3906,7 @@ public class Sms extends CordovaPlugin {
       + "|" + joinJsonArray(thread.optJSONArray("addresses"), "|");
   }
 
-  private JSONArray toJsonArray(List<String> values) {
+  private JSONArray toStringJsonArray(List<String> values) {
     JSONArray result;
     int index;
 
