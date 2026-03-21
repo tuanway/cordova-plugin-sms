@@ -21,6 +21,8 @@ public class SmsReceiver extends BroadcastReceiver {
   @Override
   public void onReceive(Context context, Intent intent) {
     String action;
+    JSONObject event;
+    Uri insertedUri;
 
     action = intent == null ? "" : intent.getAction();
 
@@ -28,7 +30,20 @@ public class SmsReceiver extends BroadcastReceiver {
       Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action) ||
       "android.provider.Telephony.SMS_DELIVER".equals(action)
     ) {
-      Sms.publishEvent(buildIncomingSmsEvent(intent));
+      event = buildIncomingSmsEvent(intent);
+      if ("android.provider.Telephony.SMS_DELIVER".equals(action)) {
+        insertedUri = Sms.persistIncomingSms(
+          context,
+          event.optString("address"),
+          event.optString("body"),
+          event.optLong("date", System.currentTimeMillis()),
+          event.optInt("subscriptionId", -1)
+        );
+        if (insertedUri != null) {
+          Sms.publishProviderChangeEvent("sms", false, insertedUri, false);
+        }
+      }
+      Sms.publishEvent(event);
       return;
     }
 

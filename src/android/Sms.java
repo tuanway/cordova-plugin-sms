@@ -188,6 +188,152 @@ public class Sms extends CordovaPlugin {
     instance.dispatchOrQueueEvent(event);
   }
 
+  public static Uri persistIncomingSms(Context context, String address, String body, long date, int subscriptionId) {
+    return persistSmsMessage(context, address, body, date, Telephony.Sms.MESSAGE_TYPE_INBOX, false, false, subscriptionId);
+  }
+
+  public static Uri persistSentSms(Context context, String address, String body, long date, int subscriptionId) {
+    return persistSmsMessage(context, address, body, date, Telephony.Sms.MESSAGE_TYPE_SENT, true, true, subscriptionId);
+  }
+
+  private static Uri persistSmsMessage(Context context, String address, String body, long date, int type, boolean read, boolean seen, int subscriptionId) {
+    ArrayList<String> recipients;
+    ContentValues values;
+    String normalizedAddress;
+    long threadId;
+    long timestamp;
+
+    if (context == null) {
+      return null;
+    }
+
+    if (Build.VERSION.SDK_INT >= 19 && !isDefaultSmsPackage(context)) {
+      return null;
+    }
+
+    normalizedAddress = normalizeAddressForProvider(address);
+    if (TextUtils.isEmpty(normalizedAddress) || TextUtils.isEmpty(body)) {
+      return null;
+    }
+
+    recipients = new ArrayList<String>();
+    recipients.add(normalizedAddress);
+    threadId = resolveOrCreateThreadId(context, recipients);
+    timestamp = date > 0L ? date : System.currentTimeMillis();
+    values = new ContentValues();
+    if (threadId > 0L) {
+      values.put("thread_id", threadId);
+    }
+    values.put("address", normalizedAddress);
+    values.put("body", body);
+    values.put("date", timestamp);
+    if (type == Telephony.Sms.MESSAGE_TYPE_SENT) {
+      values.put("date_sent", timestamp);
+    }
+    values.put("read", read ? 1 : 0);
+    values.put("seen", seen ? 1 : 0);
+    values.put("type", type);
+    values.put("status", -1);
+    if (subscriptionId > 0) {
+      values.put("sub_id", subscriptionId);
+      values.put("subscription_id", subscriptionId);
+      values.put("sim_id", subscriptionId);
+    }
+
+    return context.getContentResolver().insert(resolveSmsUriForTypeStatic(type), values);
+  }
+
+  private static boolean isDefaultSmsPackage(Context context) {
+    String defaultPackage;
+
+    if (context == null || Build.VERSION.SDK_INT < 19) {
+      return true;
+    }
+
+    defaultPackage = Telephony.Sms.getDefaultSmsPackage(context);
+    if (TextUtils.isEmpty(defaultPackage)) {
+      return false;
+    }
+
+    return context.getPackageName().equals(defaultPackage);
+  }
+
+  private static Uri resolveSmsUriForTypeStatic(int type) {
+    if (type == Telephony.Sms.MESSAGE_TYPE_SENT) {
+      return Telephony.Sms.Sent.CONTENT_URI;
+    }
+
+    if (type == Telephony.Sms.MESSAGE_TYPE_DRAFT) {
+      return Telephony.Sms.Draft.CONTENT_URI;
+    }
+
+    return Telephony.Sms.Inbox.CONTENT_URI;
+  }
+
+  private static long resolveOrCreateThreadId(Context context, List<String> recipients) {
+    ContentResolver resolver;
+    Uri.Builder builder;
+    Cursor cursor;
+    int index;
+
+    if (context == null || recipients == null || recipients.isEmpty()) {
+      return 0L;
+    }
+
+    resolver = context.getContentResolver();
+    builder = Uri.parse("content://mms-sms/threadID").buildUpon();
+
+    for (index = 0; index < recipients.size(); index++) {
+      if (!TextUtils.isEmpty(recipients.get(index))) {
+        builder.appendQueryParameter("recipient", recipients.get(index));
+      }
+    }
+
+    cursor = resolver.query(builder.build(), new String[] { "_id" }, null, null, null);
+    if (cursor == null) {
+      return 0L;
+    }
+
+    try {
+      if (!cursor.moveToFirst()) {
+        return 0L;
+      }
+
+      return cursor.getLong(cursor.getColumnIndex("_id"));
+    } finally {
+      cursor.close();
+    }
+  }
+
+  private static String normalizeAddressForProvider(String value) {
+    String result;
+    String normalizedNumber;
+
+    result = value == null ? "" : value.trim();
+    if (TextUtils.isEmpty(result)) {
+      return "";
+    }
+
+    if (result.startsWith("tel:")) {
+      result = result.substring(4).trim();
+    }
+
+    if (result.startsWith("mailto:")) {
+      result = result.substring(7).trim();
+    }
+
+    if (result.indexOf('@') >= 0) {
+      return result.toLowerCase(Locale.US);
+    }
+
+    normalizedNumber = PhoneNumberUtils.normalizeNumber(result);
+    if (!TextUtils.isEmpty(normalizedNumber)) {
+      return normalizedNumber;
+    }
+
+    return result.toLowerCase(Locale.US);
+  }
+
   @Override
   public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) throws JSONException {
     if (ACTION_HAS_PERMISSIONS.equals(action)) {
@@ -3393,6 +3539,7 @@ public class Sms extends CordovaPlugin {
     int subscriptionId;
     int index;
     boolean trackDelivery;
+    Uri insertedUri;
 
     recipients = normalizeRecipients(options.optJSONArray("recipients"));
     message = safeString(options.opt("message"));
@@ -3430,6 +3577,13 @@ public class Sms extends CordovaPlugin {
           buildStatusPendingIntent(BROADCAST_ACTION_SMS_SENT, requestId, recipients.get(index), index, 0, 1, subscriptionId),
           trackDelivery ? buildStatusPendingIntent(BROADCAST_ACTION_SMS_DELIVERED, requestId, recipients.get(index), index, 0, 1, subscriptionId) : null
         );
+      }
+
+      if (Build.VERSION.SDK_INT >= 19 && isDefaultSmsApp()) {
+        insertedUri = persistSentSms(cordova.getActivity(), recipients.get(index), message, System.currentTimeMillis(), subscriptionId);
+        if (insertedUri != null) {
+          publishProviderChangeEvent("sms", false, insertedUri, false);
+        }
       }
     }
 
