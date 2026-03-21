@@ -29,6 +29,7 @@
       <uses-permission android:name="android.permission.RECEIVE_MMS" />
       <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
       <uses-permission android:name="android.permission.SEND_SMS" />
+      <uses-permission android:name="android.permission.SEND_RESPOND_VIA_MESSAGE" />
       <uses-permission android:name="android.permission.READ_PHONE_STATE" />
       <uses-permission android:name="android.permission.READ_CONTACTS" />
       <uses-permission android:name="android.permission.WRITE_SMS" />
@@ -50,18 +51,60 @@
           <action android:name="com.cordova.sms.MMS_SENT" />
         </intent-filter>
       </receiver>
+      <receiver android:name="com.cordova.sms.SmsDeliverReceiver" android:exported="true" android:permission="android.permission.BROADCAST_SMS">
+        <intent-filter>
+          <action android:name="android.provider.Telephony.SMS_DELIVER" />
+        </intent-filter>
+      </receiver>
+      <receiver android:name="com.cordova.sms.MmsDeliverReceiver" android:exported="true" android:permission="android.permission.BROADCAST_WAP_PUSH">
+        <intent-filter>
+          <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+          <data android:mimeType="application/vnd.wap.mms-message" />
+        </intent-filter>
+      </receiver>
       <receiver android:name="com.cordova.sms.SmsBootReceiver" android:enabled="true" android:exported="true">
         <intent-filter>
           <action android:name="android.intent.action.BOOT_COMPLETED" />
           <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
         </intent-filter>
       </receiver>
+      <activity
+        android:name="com.cordova.sms.SmsComposeActivity"
+        android:exported="true"
+        android:noHistory="true"
+        android:excludeFromRecents="true"
+        android:theme="@android:style/Theme.NoDisplay">
+        <intent-filter>
+          <action android:name="android.intent.action.SENDTO" />
+          <category android:name="android.intent.category.DEFAULT" />
+          <data android:scheme="sms" />
+          <data android:scheme="smsto" />
+          <data android:scheme="mms" />
+          <data android:scheme="mmsto" />
+        </intent-filter>
+      </activity>
+      <service
+        android:name="com.cordova.sms.SmsRespondService"
+        android:exported="true"
+        android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE">
+        <intent-filter>
+          <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+          <data android:scheme="sms" />
+          <data android:scheme="smsto" />
+          <data android:scheme="mms" />
+          <data android:scheme="mmsto" />
+        </intent-filter>
+      </service>
       <service android:name="com.cordova.sms.SmsWatchService" android:exported="false" android:foregroundServiceType="dataSync" />
     </config-file>
 
     <source-file src="src/android/Sms.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsReceiver.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/SmsDeliverReceiver.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/MmsDeliverReceiver.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsBootReceiver.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/SmsComposeActivity.java" target-dir="src/com/cordova/sms" />
+    <source-file src="src/android/SmsRespondService.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsWatchService.java" target-dir="src/com/cordova/sms" />
   </platform>
 </plugin>

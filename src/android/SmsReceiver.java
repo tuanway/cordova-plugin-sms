@@ -24,12 +24,18 @@ public class SmsReceiver extends BroadcastReceiver {
 
     action = intent == null ? "" : intent.getAction();
 
-    if (Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action)) {
+    if (
+      Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action) ||
+      "android.provider.Telephony.SMS_DELIVER".equals(action)
+    ) {
       Sms.publishEvent(buildIncomingSmsEvent(intent));
       return;
     }
 
-    if ("android.provider.Telephony.WAP_PUSH_RECEIVED".equals(action)) {
+    if (
+      "android.provider.Telephony.WAP_PUSH_RECEIVED".equals(action) ||
+      "android.provider.Telephony.WAP_PUSH_DELIVER".equals(action)
+    ) {
       Sms.publishEvent(buildIncomingMmsEvent(context, intent));
       return;
     }

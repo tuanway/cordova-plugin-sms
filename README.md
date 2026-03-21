@@ -6,6 +6,7 @@ Standalone Android Cordova plugin scaffold for reading device SMS and MMS data, 
 
 - Runtime permission checks and requests
 - Default-SMS-app detection and request flow
+- Android default-SMS-app manifest components for `SMS_DELIVER`, `WAP_PUSH_DELIVER`, `SENDTO`, and `RESPOND_VIA_MESSAGE`
 - Active SIM and subscription listing
 - Foreground background-watch service for provider-change event continuity, including restart after reboot or app update when enabled
 - Thread list reads from the Android SMS/MMS provider
@@ -111,6 +112,7 @@ cordova.plugins.sms.setThreadSettings(threadKey, settings, options, success, err
 
 ## Important Android constraints
 
+- Android will only grant the SMS role if the built app includes the required SMS-app manifest components. This plugin now contributes those components, but you still need to rebuild the Cordova app so they are merged into the final `AndroidManifest.xml`.
 - `threadKey` is the Android `thread_id` serialized as a string.
 - MMS reads depend on the platform message provider and `READ_SMS`.
 - MMS direct send only works if the caller provides a prepared `pduUri`; raw attachment arrays still fall back to compose-intent handoff.
