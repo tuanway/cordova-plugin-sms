@@ -1856,6 +1856,43 @@ public class Sms extends CordovaPlugin {
       return resolveSubscriptionIdForSlot(simSlotIndex);
     }
 
+    subscriptionId = resolveDefaultSubscriptionId();
+    if (subscriptionId > -1) {
+      return subscriptionId;
+    }
+
+    return -1;
+  }
+
+  private int resolveDefaultSubscriptionId() {
+    SubscriptionManager manager;
+    List<SubscriptionInfo> subscriptions;
+    int defaultSubscriptionId;
+    int index;
+
+    if (Build.VERSION.SDK_INT >= 24) {
+      defaultSubscriptionId = SubscriptionManager.getDefaultSmsSubscriptionId();
+      if (defaultSubscriptionId > -1) {
+        return defaultSubscriptionId;
+      }
+    }
+
+    if (Build.VERSION.SDK_INT < 22 || !hasPermissions(PHONE_STATE_PERMISSIONS)) {
+      return -1;
+    }
+
+    manager = SubscriptionManager.from(cordova.getActivity());
+    subscriptions = manager.getActiveSubscriptionInfoList();
+    if (subscriptions == null || subscriptions.isEmpty()) {
+      return -1;
+    }
+
+    for (index = 0; index < subscriptions.size(); index++) {
+      if (subscriptions.get(index) != null && subscriptions.get(index).getSubscriptionId() > -1) {
+        return subscriptions.get(index).getSubscriptionId();
+      }
+    }
+
     return -1;
   }
 
