@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
 import android.content.SharedPreferences;
 import android.database.ContentObserver;
@@ -2838,15 +2839,39 @@ public class Sms extends CordovaPlugin {
   }
 
   private Uri buildContentUriForFile(File file) {
+    String[] authorities;
+    int index;
+
     if (file == null) {
       return null;
     }
 
-    return FileProvider.getUriForFile(
-      cordova.getActivity(),
-      cordova.getActivity().getPackageName() + ".cordova.sms.provider",
-      file
-    );
+    authorities = buildFileProviderAuthorities();
+    for (index = 0; index < authorities.length; index++) {
+      if (TextUtils.isEmpty(authorities[index])) {
+        continue;
+      }
+      try {
+        return FileProvider.getUriForFile(
+          cordova.getActivity(),
+          authorities[index],
+          file
+        );
+      } catch (IllegalArgumentException exception) {
+      }
+    }
+
+    throw new IllegalArgumentException("No FileProvider authority available for attachment file.");
+  }
+
+  private String[] buildFileProviderAuthorities() {
+    String packageName;
+
+    packageName = cordova.getActivity().getPackageName();
+    return new String[] {
+      packageName + ".cordova.sms.provider",
+      packageName + ".cdv.core.file.provider"
+    };
   }
 
   private void writeBytesToFile(File targetFile, byte[] bytes) throws Exception {
@@ -2961,6 +2986,9 @@ public class Sms extends CordovaPlugin {
     defaultPackage = getDefaultSmsPackage();
     if (!TextUtils.isEmpty(defaultPackage)) {
       intent.setPackage(defaultPackage);
+      if (!canResolveIntent(intent)) {
+        intent.setPackage(null);
+      }
     }
 
     if (useChooser) {
@@ -2974,6 +3002,21 @@ public class Sms extends CordovaPlugin {
     }
 
     return intent;
+  }
+
+  private boolean canResolveIntent(Intent intent) {
+    PackageManager packageManager;
+
+    if (intent == null || cordova == null || cordova.getActivity() == null) {
+      return false;
+    }
+
+    packageManager = cordova.getActivity().getPackageManager();
+    if (packageManager == null) {
+      return false;
+    }
+
+    return intent.resolveActivity(packageManager) != null;
   }
 
   private JSONObject buildSendResult(String mode, int recipientCount, int attachmentCount, String requestId, int subscriptionId) {
