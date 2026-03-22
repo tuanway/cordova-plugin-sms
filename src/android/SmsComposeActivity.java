@@ -11,6 +11,11 @@ public class SmsComposeActivity extends Activity {
   public static final String EXTRA_EXTERNAL_DATA = "com.cordova.sms.externalData";
   public static final String EXTRA_EXTERNAL_ADDRESS = "com.cordova.sms.externalAddress";
   public static final String EXTRA_EXTERNAL_BODY = "com.cordova.sms.externalBody";
+  public static final String EXTRA_LAUNCH_SOURCE = "com.cordova.sms.launchSource";
+  public static final String EXTRA_THREAD_KEY = "com.cordova.sms.threadKey";
+  public static final String EXTRA_ADDRESSES = "com.cordova.sms.addresses";
+  public static final String EXTRA_NOTIFICATION_ID = "com.cordova.sms.notificationId";
+  public static final String EXTRA_OPEN_THREAD = "com.cordova.sms.openThread";
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {

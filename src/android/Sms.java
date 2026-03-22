@@ -60,6 +60,7 @@ public class Sms extends CordovaPlugin {
   private static final String ACTION_START_BACKGROUND_WATCH = "startBackgroundWatch";
   private static final String ACTION_STOP_BACKGROUND_WATCH = "stopBackgroundWatch";
   private static final String ACTION_GET_BACKGROUND_WATCH_STATE = "getBackgroundWatchState";
+  private static final String ACTION_CONSUME_LAUNCH_CONTEXT = "consumeLaunchContext";
   private static final String ACTION_LIST_THREADS = "listThreads";
   private static final String ACTION_SEARCH_THREADS = "searchThreads";
   private static final String ACTION_LIST_MESSAGES = "listMessages";
@@ -124,8 +125,11 @@ public class Sms extends CordovaPlugin {
   };
 
   private static final Object EVENT_LOCK = new Object();
+  private static final Object LAUNCH_CONTEXT_LOCK = new Object();
   private static final ArrayList<JSONObject> PENDING_EVENTS = new ArrayList<JSONObject>();
   private static Sms activeInstance;
+  private static JSONObject pendingLaunchContext;
+  private static boolean appInForeground;
 
   private CallbackContext permissionCallbackContext;
   private CallbackContext defaultSmsAppCallbackContext;
@@ -145,7 +149,10 @@ public class Sms extends CordovaPlugin {
 
     synchronized (EVENT_LOCK) {
       activeInstance = this;
+      appInForeground = true;
     }
+
+    captureLaunchIntent(cordova == null || cordova.getActivity() == null ? null : cordova.getActivity().getIntent());
   }
 
   @Override
@@ -155,6 +162,7 @@ public class Sms extends CordovaPlugin {
     synchronized (EVENT_LOCK) {
       if (activeInstance == this) {
         activeInstance = null;
+        appInForeground = false;
       }
     }
 
@@ -168,10 +176,39 @@ public class Sms extends CordovaPlugin {
     synchronized (EVENT_LOCK) {
       if (activeInstance == this) {
         activeInstance = null;
+        appInForeground = false;
       }
     }
 
     super.onDestroy();
+  }
+
+  @Override
+  public void onPause(boolean multitasking) {
+    synchronized (EVENT_LOCK) {
+      if (activeInstance == this) {
+        appInForeground = false;
+      }
+    }
+
+    super.onPause(multitasking);
+  }
+
+  @Override
+  public void onResume(boolean multitasking) {
+    super.onResume(multitasking);
+
+    synchronized (EVENT_LOCK) {
+      if (activeInstance == this) {
+        appInForeground = true;
+      }
+    }
+  }
+
+  @Override
+  public void onNewIntent(Intent intent) {
+    captureLaunchIntent(intent);
+    super.onNewIntent(intent);
   }
 
   public static void publishEvent(JSONObject event) {
@@ -186,6 +223,22 @@ public class Sms extends CordovaPlugin {
     }
 
     instance.dispatchOrQueueEvent(event);
+  }
+
+  public static boolean isAppForeground() {
+    synchronized (EVENT_LOCK) {
+      return appInForeground;
+    }
+  }
+
+  public static void storeLaunchContext(JSONObject launchContext) {
+    if (launchContext == null || launchContext.length() == 0) {
+      return;
+    }
+
+    synchronized (LAUNCH_CONTEXT_LOCK) {
+      pendingLaunchContext = copyJson(launchContext);
+    }
   }
 
   public static Uri persistIncomingSms(Context context, String address, String body, long date, int subscriptionId) {
@@ -410,6 +463,11 @@ public class Sms extends CordovaPlugin {
 
     if (ACTION_GET_BACKGROUND_WATCH_STATE.equals(action)) {
       callbackContext.success(buildBackgroundWatchState());
+      return true;
+    }
+
+    if (ACTION_CONSUME_LAUNCH_CONTEXT.equals(action)) {
+      callbackContext.success(consumePendingLaunchContext());
       return true;
     }
 
@@ -887,6 +945,136 @@ public class Sms extends CordovaPlugin {
     }
 
     return result;
+  }
+
+  private void captureLaunchIntent(Intent intent) {
+    JSONObject launchContext;
+
+    launchContext = buildLaunchContextFromIntent(intent);
+    if (launchContext == null || launchContext.length() == 0) {
+      return;
+    }
+
+    storeLaunchContext(launchContext);
+  }
+
+  private static JSONObject consumePendingLaunchContext() {
+    JSONObject result;
+
+    synchronized (LAUNCH_CONTEXT_LOCK) {
+      result = copyJson(pendingLaunchContext);
+      pendingLaunchContext = null;
+    }
+
+    return result == null ? new JSONObject() : result;
+  }
+
+  private static JSONObject buildLaunchContextFromIntent(Intent intent) {
+    JSONObject result;
+    JSONArray addresses;
+    String source;
+    String action;
+    String data;
+    String address;
+    String body;
+    String threadKey;
+    boolean openThread;
+    int notificationId;
+
+    if (intent == null) {
+      return null;
+    }
+
+    source = intent.getStringExtra(SmsComposeActivity.EXTRA_LAUNCH_SOURCE);
+    action = intent.getAction();
+    data = intent.getDataString();
+    address = firstStaticNonEmpty(
+      intent.getStringExtra(SmsComposeActivity.EXTRA_EXTERNAL_ADDRESS),
+      SmsComposeActivity.extractAddress(intent)
+    );
+    body = firstStaticNonEmpty(
+      intent.getStringExtra(SmsComposeActivity.EXTRA_EXTERNAL_BODY),
+      SmsComposeActivity.extractBody(intent)
+    );
+    threadKey = intent.getStringExtra(SmsComposeActivity.EXTRA_THREAD_KEY);
+    openThread = intent.getBooleanExtra(SmsComposeActivity.EXTRA_OPEN_THREAD, false);
+    notificationId = intent.getIntExtra(SmsComposeActivity.EXTRA_NOTIFICATION_ID, 0);
+    addresses = buildLaunchAddressArray(intent, address);
+
+    if (TextUtils.isEmpty(source) && openThread) {
+      source = "notification";
+    }
+
+    if (
+      TextUtils.isEmpty(source) &&
+      TextUtils.isEmpty(action) &&
+      TextUtils.isEmpty(data) &&
+      TextUtils.isEmpty(address) &&
+      TextUtils.isEmpty(body) &&
+      TextUtils.isEmpty(threadKey) &&
+      addresses.length() == 0 &&
+      !openThread &&
+      notificationId <= 0
+    ) {
+      return null;
+    }
+
+    result = new JSONObject();
+
+    try {
+      result.put("source", source == null ? "" : source);
+      result.put("action", action == null ? "" : action);
+      result.put("data", data == null ? "" : data);
+      result.put("address", address == null ? "" : address);
+      result.put("body", body == null ? "" : body);
+      result.put("threadKey", threadKey == null ? "" : threadKey);
+      result.put("openThread", openThread);
+      result.put("notificationId", notificationId);
+      result.put("addresses", addresses);
+    } catch (JSONException ignored) {
+    }
+
+    return result;
+  }
+
+  private static JSONArray buildLaunchAddressArray(Intent intent, String primaryAddress) {
+    LinkedHashSet<String> unique;
+    JSONArray result;
+    String rawAddresses;
+    String[] parts;
+    int index;
+
+    unique = new LinkedHashSet<String>();
+    result = new JSONArray();
+    rawAddresses = intent == null ? "" : intent.getStringExtra(SmsComposeActivity.EXTRA_ADDRESSES);
+
+    if (!TextUtils.isEmpty(rawAddresses)) {
+      parts = rawAddresses.split("[,;\\n]");
+      for (index = 0; index < parts.length; index++) {
+        addLaunchAddress(unique, parts[index]);
+      }
+    }
+
+    addLaunchAddress(unique, primaryAddress);
+
+    for (String value : unique) {
+      result.put(value);
+    }
+
+    return result;
+  }
+
+  private static void addLaunchAddress(LinkedHashSet<String> unique, String value) {
+    String normalized;
+
+    if (unique == null) {
+      return;
+    }
+
+    normalized = normalizeAddressForProvider(value);
+    if (!TextUtils.isEmpty(normalized)) {
+      unique.add(normalized);
+    }
   }
 
   private void handleWatch(JSONObject options, CallbackContext callbackContext) {
@@ -4327,6 +4515,14 @@ public class Sms extends CordovaPlugin {
     }
 
     return fallback;
+  }
+
+  private static String firstStaticNonEmpty(String first, String second) {
+    if (!TextUtils.isEmpty(first)) {
+      return first;
+    }
+
+    return second;
   }
 
   private static JSONObject copyJson(JSONObject value) {

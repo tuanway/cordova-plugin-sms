@@ -179,6 +179,10 @@
       exec(success, error, "Sms", "getBackgroundWatchState", []);
     },
 
+    consumeLaunchContext: function(success, error) {
+      exec(success, error, "Sms", "consumeLaunchContext", []);
+    },
+
     on: function(eventName, handler) {
       if (typeof handler !== "function" || !eventName) {
         return;

@@ -1,12 +1,17 @@
 package com.cordova.sms;
 
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Telephony;
 import android.telephony.SmsManager;
@@ -18,6 +23,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 public class SmsReceiver extends BroadcastReceiver {
+  private static final String MESSAGE_NOTIFICATION_CHANNEL_ID = "cordova_sms_messages";
+  private static final int MESSAGE_NOTIFICATION_BASE_ID = 12000;
+
   @Override
   public void onReceive(Context context, Intent intent) {
     String action;
@@ -43,6 +51,9 @@ public class SmsReceiver extends BroadcastReceiver {
           Sms.publishProviderChangeEvent("sms", false, insertedUri, false);
         }
       }
+      if (shouldNotifyIncomingMessage(context, action)) {
+        showIncomingNotification(context, event);
+      }
       Sms.publishEvent(event);
       return;
     }
@@ -51,7 +62,11 @@ public class SmsReceiver extends BroadcastReceiver {
       "android.provider.Telephony.WAP_PUSH_RECEIVED".equals(action) ||
       "android.provider.Telephony.WAP_PUSH_DELIVER".equals(action)
     ) {
-      Sms.publishEvent(buildIncomingMmsEvent(context, intent));
+      event = buildIncomingMmsEvent(context, intent);
+      if (shouldNotifyIncomingMessage(context, action)) {
+        showIncomingNotification(context, event);
+      }
+      Sms.publishEvent(event);
       return;
     }
 
@@ -68,6 +83,209 @@ public class SmsReceiver extends BroadcastReceiver {
     if (Sms.BROADCAST_ACTION_MMS_SENT.equals(action)) {
       Sms.publishEvent(buildStatusEvent("mmsSentStatus", intent, getResultCode()));
     }
+  }
+
+  private boolean shouldNotifyIncomingMessage(Context context, String action) {
+    if (context == null || Sms.isAppForeground()) {
+      return false;
+    }
+
+    if (
+      "android.provider.Telephony.SMS_DELIVER".equals(action) ||
+      "android.provider.Telephony.WAP_PUSH_DELIVER".equals(action)
+    ) {
+      return true;
+    }
+
+    if (
+      Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action) ||
+      "android.provider.Telephony.WAP_PUSH_RECEIVED".equals(action)
+    ) {
+      return !isDefaultSmsPackage(context);
+    }
+
+    return false;
+  }
+
+  private boolean isDefaultSmsPackage(Context context) {
+    String defaultPackage;
+
+    if (context == null || Build.VERSION.SDK_INT < 19) {
+      return true;
+    }
+
+    defaultPackage = Telephony.Sms.getDefaultSmsPackage(context);
+    if (TextUtils.isEmpty(defaultPackage)) {
+      return false;
+    }
+
+    return context.getPackageName().equals(defaultPackage);
+  }
+
+  private void showIncomingNotification(Context context, JSONObject event) {
+    NotificationManager manager;
+    Notification.Builder builder;
+    PendingIntent contentIntent;
+    String messageText;
+    int notificationId;
+    int iconId;
+
+    if (context == null || event == null) {
+      return;
+    }
+
+    manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+    if (manager == null) {
+      return;
+    }
+
+    createNotificationChannel(manager);
+    contentIntent = buildNotificationPendingIntent(context, event);
+    messageText = buildNotificationText(event);
+    notificationId = resolveNotificationId(event);
+    iconId = context.getApplicationInfo().icon == 0 ? android.R.drawable.sym_action_chat : context.getApplicationInfo().icon;
+
+    if (Build.VERSION.SDK_INT >= 26) {
+      builder = new Notification.Builder(context, MESSAGE_NOTIFICATION_CHANNEL_ID);
+    } else {
+      builder = new Notification.Builder(context);
+    }
+
+    builder.setSmallIcon(iconId);
+    builder.setContentTitle(buildNotificationTitle(event));
+    builder.setContentText(messageText);
+    builder.setAutoCancel(true);
+    builder.setShowWhen(true);
+    builder.setWhen(event.optLong("date", System.currentTimeMillis()));
+    builder.setContentIntent(contentIntent);
+
+    if (Build.VERSION.SDK_INT >= 16) {
+      builder.setStyle(new Notification.BigTextStyle().bigText(messageText));
+    }
+
+    manager.notify(notificationId, builder.build());
+  }
+
+  private void createNotificationChannel(NotificationManager manager) {
+    NotificationChannel channel;
+
+    if (manager == null || Build.VERSION.SDK_INT < 26) {
+      return;
+    }
+
+    channel = new NotificationChannel(
+      MESSAGE_NOTIFICATION_CHANNEL_ID,
+      "SMS Messages",
+      NotificationManager.IMPORTANCE_HIGH
+    );
+    channel.setDescription("Incoming SMS and MMS messages");
+    manager.createNotificationChannel(channel);
+  }
+
+  private PendingIntent buildNotificationPendingIntent(Context context, JSONObject event) {
+    Intent intent;
+    int flags;
+
+    intent = new Intent(context, SmsComposeActivity.class);
+    intent.setAction("com.cordova.sms.action.OPEN_THREAD_FROM_NOTIFICATION");
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+    intent.putExtra(SmsComposeActivity.EXTRA_LAUNCH_SOURCE, "notification");
+    intent.putExtra(SmsComposeActivity.EXTRA_EXTERNAL_ACTION, "notification");
+    intent.putExtra(SmsComposeActivity.EXTRA_EXTERNAL_ADDRESS, safeString(event.opt("address")));
+    intent.putExtra(SmsComposeActivity.EXTRA_EXTERNAL_BODY, buildNotificationText(event));
+    intent.putExtra(SmsComposeActivity.EXTRA_THREAD_KEY, safeString(event.opt("threadKey")));
+    intent.putExtra(SmsComposeActivity.EXTRA_ADDRESSES, joinAddresses(event.optJSONArray("addresses")));
+    intent.putExtra(SmsComposeActivity.EXTRA_NOTIFICATION_ID, resolveNotificationId(event));
+    intent.putExtra(SmsComposeActivity.EXTRA_OPEN_THREAD, true);
+
+    flags = PendingIntent.FLAG_UPDATE_CURRENT;
+    if (Build.VERSION.SDK_INT >= 23) {
+      flags |= PendingIntent.FLAG_IMMUTABLE;
+    }
+
+    return PendingIntent.getActivity(context, resolveNotificationId(event), intent, flags);
+  }
+
+  private int resolveNotificationId(JSONObject event) {
+    String threadKey;
+    String address;
+
+    threadKey = safeString(event == null ? "" : event.opt("threadKey"));
+    if (!TextUtils.isEmpty(threadKey)) {
+      return MESSAGE_NOTIFICATION_BASE_ID + (threadKey.hashCode() & Integer.MAX_VALUE);
+    }
+
+    address = safeString(event == null ? "" : event.opt("address"));
+    if (!TextUtils.isEmpty(address)) {
+      return MESSAGE_NOTIFICATION_BASE_ID + (address.hashCode() & Integer.MAX_VALUE);
+    }
+
+    return MESSAGE_NOTIFICATION_BASE_ID;
+  }
+
+  private String buildNotificationTitle(JSONObject event) {
+    String address;
+
+    address = safeString(event == null ? "" : event.opt("address"));
+    if (!TextUtils.isEmpty(address)) {
+      return address;
+    }
+
+    return "New message";
+  }
+
+  private String buildNotificationText(JSONObject event) {
+    String body;
+    String subject;
+
+    body = sanitizeNotificationText(safeString(event == null ? "" : event.opt("body")));
+    if (!TextUtils.isEmpty(body)) {
+      return body;
+    }
+
+    subject = sanitizeNotificationText(safeString(event == null ? "" : event.opt("subject")));
+    if (!TextUtils.isEmpty(subject)) {
+      return subject;
+    }
+
+    if (event != null && event.optBoolean("mms", false)) {
+      return "New media message";
+    }
+
+    return "New message";
+  }
+
+  private String sanitizeNotificationText(String value) {
+    if (TextUtils.isEmpty(value)) {
+      return "";
+    }
+
+    return value.replace('\n', ' ').trim();
+  }
+
+  private String joinAddresses(JSONArray addresses) {
+    StringBuilder builder;
+    int index;
+    String value;
+
+    if (addresses == null || addresses.length() == 0) {
+      return "";
+    }
+
+    builder = new StringBuilder();
+    for (index = 0; index < addresses.length(); index++) {
+      value = safeString(addresses.opt(index));
+      if (TextUtils.isEmpty(value)) {
+        continue;
+      }
+
+      if (builder.length() > 0) {
+        builder.append(',');
+      }
+      builder.append(value);
+    }
+
+    return builder.toString();
   }
 
   private JSONObject buildIncomingSmsEvent(Intent intent) {
