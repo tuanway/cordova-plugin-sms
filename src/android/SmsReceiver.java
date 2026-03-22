@@ -124,6 +124,22 @@ public class SmsReceiver extends BroadcastReceiver {
         event = buildStatusEvent("mmsSentStatus", intent, getResultCode());
         logReceiverEvent(context, "receiver_mms_sent_status", event);
         Sms.publishEvent(event);
+        if (getResultCode() == Activity.RESULT_OK) {
+          BroadcastReceiver.PendingResult pendingResult;
+          long previousLatestProviderId;
+
+          previousLatestProviderId = queryLatestOutgoingMmsProviderId(context);
+          pendingResult = goAsync();
+          scheduleSentMmsRefresh(
+            context == null ? null : context.getApplicationContext(),
+            previousLatestProviderId,
+            event.optLong("timestamp", System.currentTimeMillis()),
+            0,
+            pendingResult,
+            event
+          );
+          return;
+        }
       }
     } catch (Throwable ignored) {
     }
@@ -413,6 +429,14 @@ public class SmsReceiver extends BroadcastReceiver {
   }
 
   private long queryLatestIncomingMmsProviderId(Context context) {
+    return queryLatestMmsProviderId(context, "msg_box = 1");
+  }
+
+  private long queryLatestOutgoingMmsProviderId(Context context) {
+    return queryLatestMmsProviderId(context, "msg_box != 1");
+  }
+
+  private long queryLatestMmsProviderId(Context context, String selection) {
     ContentResolver resolver;
     Cursor cursor;
 
@@ -424,7 +448,7 @@ public class SmsReceiver extends BroadcastReceiver {
     cursor = resolver.query(
       Uri.parse("content://mms"),
       new String[] { "_id" },
-      "msg_box = 1",
+      selection,
       null,
       "date DESC"
     );
@@ -446,6 +470,14 @@ public class SmsReceiver extends BroadcastReceiver {
   }
 
   private JSONObject queryLatestMms(Context context, int subscriptionId, long previousLatestProviderId, long receivedAt) {
+    return queryLatestMms(context, subscriptionId, previousLatestProviderId, receivedAt, "msg_box = 1");
+  }
+
+  private JSONObject queryLatestOutgoingMms(Context context, int subscriptionId, long previousLatestProviderId, long sentAt) {
+    return queryLatestMms(context, subscriptionId, previousLatestProviderId, sentAt, "msg_box != 1");
+  }
+
+  private JSONObject queryLatestMms(Context context, int subscriptionId, long previousLatestProviderId, long receivedAt, String selection) {
     ContentResolver resolver;
     Cursor cursor;
     long minAllowedDate;
@@ -459,7 +491,7 @@ public class SmsReceiver extends BroadcastReceiver {
     cursor = resolver.query(
       Uri.parse("content://mms"),
       new String[] { "_id", "thread_id", "date", "date_sent", "msg_box", "read", "sub" },
-      "msg_box = 1",
+      selection,
       null,
       "date DESC"
     );
@@ -527,6 +559,50 @@ public class SmsReceiver extends BroadcastReceiver {
     }, delayMs);
   }
 
+  private void scheduleSentMmsRefresh(final Context context, final long previousLatestProviderId, final long sentAt, final int attempt, final BroadcastReceiver.PendingResult pendingResult, final JSONObject baseEvent) {
+    long delayMs;
+
+    delayMs = attempt <= 0 ? MMS_PROVIDER_REFRESH_INITIAL_DELAY_MS : MMS_PROVIDER_REFRESH_RETRY_DELAY_MS;
+    Sms.addDebugLog(context, "receiver_mms_sent_refresh_scheduled", buildMmsRefreshLogDetails(baseEvent, attempt));
+    new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+      @Override
+      public void run() {
+        JSONObject refreshedEvent;
+        long providerId;
+
+        try {
+          refreshedEvent = queryLatestOutgoingMms(context, readSubscriptionIdFromEvent(baseEvent), previousLatestProviderId, sentAt);
+          if (refreshedEvent != null && refreshedEvent.optLong("providerId", 0L) > 0L) {
+            providerId = refreshedEvent.optLong("providerId", 0L);
+            refreshedEvent.put("type", "mmsSentStatus");
+            refreshedEvent.put("status", "sent");
+            refreshedEvent.put("resultCode", Activity.RESULT_OK);
+            refreshedEvent.put("requestId", safeString(baseEvent == null ? "" : baseEvent.opt("requestId")));
+            refreshedEvent.put("subscriptionId", readSubscriptionIdFromEvent(baseEvent));
+            refreshedEvent.put("timestamp", System.currentTimeMillis());
+            Sms.addDebugLog(context, "receiver_mms_sent_refresh_success", buildMmsRefreshLogDetails(refreshedEvent, attempt));
+            Sms.publishEvent(refreshedEvent);
+            Sms.publishProviderChangeEvent("mms", false, Uri.parse("content://mms/" + providerId), false);
+            finishPendingResult(pendingResult);
+            return;
+          }
+
+          if (attempt + 1 >= MMS_PROVIDER_REFRESH_MAX_ATTEMPTS) {
+            Sms.addDebugLog(context, "receiver_mms_sent_refresh_timeout", buildMmsRefreshLogDetails(refreshedEvent, attempt));
+            Sms.publishProviderChangeEvent("mms", false, Uri.parse("content://mms"), false);
+            finishPendingResult(pendingResult);
+            return;
+          }
+
+          scheduleSentMmsRefresh(context, previousLatestProviderId, sentAt, attempt + 1, pendingResult, baseEvent);
+        } catch (Throwable ignored) {
+          Sms.addDebugLog(context, "receiver_mms_sent_refresh_error", buildMmsRefreshLogDetails(baseEvent, attempt));
+          finishPendingResult(pendingResult);
+        }
+      }
+    }, delayMs);
+  }
+
   private JSONObject buildMmsRefreshLogDetails(JSONObject event, int attempt) {
     JSONObject details;
 
@@ -539,6 +615,10 @@ public class SmsReceiver extends BroadcastReceiver {
     } catch (JSONException ignored) {
     }
     return details;
+  }
+
+  private int readSubscriptionIdFromEvent(JSONObject event) {
+    return event == null ? -1 : event.optInt("subscriptionId", -1);
   }
 
   private void finishPendingResult(BroadcastReceiver.PendingResult pendingResult) {
