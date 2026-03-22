@@ -1570,7 +1570,7 @@ public class Sms extends CordovaPlugin {
     SmsManager smsManager;
 
     pduUri = safeString(options.opt("pduUri"));
-    if (TextUtils.isEmpty(pduUri) || Build.VERSION.SDK_INT < 21) {
+    if (options.optBoolean("forceIntent", false) || TextUtils.isEmpty(pduUri) || Build.VERSION.SDK_INT < 21) {
       handleSendMmsIntent(options, callbackContext);
       return;
     }
@@ -1608,12 +1608,14 @@ public class Sms extends CordovaPlugin {
     ArrayList<Uri> streams;
     int index;
     int subscriptionId;
+    boolean useChooser;
 
     attachments = options.optJSONArray("attachments");
     recipients = normalizeRecipients(options.optJSONArray("recipients"));
     message = safeString(options.opt("message"));
     streams = new ArrayList<Uri>();
     subscriptionId = resolveRequestedSubscriptionId(options);
+    useChooser = options.optBoolean("useChooser", false);
 
     if (attachments != null) {
       for (index = 0; index < attachments.length(); index++) {
@@ -1639,7 +1641,7 @@ public class Sms extends CordovaPlugin {
       }
     }
 
-    intent = buildMmsIntent(recipients, message, streams, attachments, subscriptionId);
+    intent = buildMmsIntent(recipients, message, streams, attachments, subscriptionId, useChooser);
 
     try {
       cordova.getActivity().startActivity(intent);
@@ -2083,11 +2085,13 @@ public class Sms extends CordovaPlugin {
     return "";
   }
 
-  private Intent buildMmsIntent(List<String> recipients, String message, ArrayList<Uri> streams, JSONArray attachmentData, int subscriptionId) {
+  private Intent buildMmsIntent(List<String> recipients, String message, ArrayList<Uri> streams, JSONArray attachmentData, int subscriptionId, boolean useChooser) {
     Intent intent;
+    Intent chooserIntent;
     ClipData clipData;
     String mimeType;
     String addressList;
+    String defaultPackage;
     int index;
 
     if (streams.size() > 1) {
@@ -2137,7 +2141,22 @@ public class Sms extends CordovaPlugin {
       intent.putExtra("android.telephony.extra.SUBSCRIPTION_INDEX", subscriptionId);
     }
 
-    return Intent.createChooser(intent, "Send message");
+    defaultPackage = getDefaultSmsPackage();
+    if (!TextUtils.isEmpty(defaultPackage)) {
+      intent.setPackage(defaultPackage);
+    }
+
+    if (useChooser) {
+      chooserIntent = Intent.createChooser(intent, "Send message");
+      chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      chooserIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      if (clipData != null) {
+        chooserIntent.setClipData(clipData);
+      }
+      return chooserIntent;
+    }
+
+    return intent;
   }
 
   private JSONObject buildSendResult(String mode, int recipientCount, int attachmentCount, String requestId, int subscriptionId) {

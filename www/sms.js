@@ -268,7 +268,17 @@
     },
 
     sendMmsIntent: function(recipients, message, attachments, options, success, error) {
-      module.exports.sendMms(recipients, message, attachments, options, success, error);
+      var normalized;
+
+      normalized = normalizeOptions(options, success, error);
+      normalized.options.recipients = normalizeRecipients(recipients);
+      normalized.options.message = message || "";
+      normalized.options.attachments = normalizeAttachments(attachments);
+      normalized.options.forceIntent = true;
+      if (typeof normalized.options.useChooser === "undefined") {
+        normalized.options.useChooser = false;
+      }
+      exec(normalized.success, normalized.error, "Sms", "sendMms", [normalized.options]);
     },
 
     markRead: function(options, success, error) {
