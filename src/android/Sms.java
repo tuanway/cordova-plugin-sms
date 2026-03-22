@@ -10,7 +10,9 @@ import android.content.Context;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.content.res.AssetFileDescriptor;
 import android.content.SharedPreferences;
 import android.database.ContentObserver;
@@ -2841,11 +2843,13 @@ public class Sms extends CordovaPlugin {
   private Uri buildContentUriForFile(File file) {
     String[] authorities;
     int index;
+    IllegalArgumentException lastException;
 
     if (file == null) {
       return null;
     }
 
+    lastException = null;
     authorities = buildFileProviderAuthorities();
     for (index = 0; index < authorities.length; index++) {
       if (TextUtils.isEmpty(authorities[index])) {
@@ -2858,20 +2862,59 @@ public class Sms extends CordovaPlugin {
           file
         );
       } catch (IllegalArgumentException exception) {
+        lastException = exception;
       }
     }
 
+    if (lastException != null) {
+      throw lastException;
+    }
     throw new IllegalArgumentException("No FileProvider authority available for attachment file.");
   }
 
   private String[] buildFileProviderAuthorities() {
+    LinkedHashSet<String> uniqueAuthorities;
     String packageName;
+    PackageInfo packageInfo;
+    ProviderInfo[] providers;
+    int index;
 
     packageName = cordova.getActivity().getPackageName();
-    return new String[] {
-      packageName + ".cordova.sms.provider",
-      packageName + ".cdv.core.file.provider"
-    };
+    uniqueAuthorities = new LinkedHashSet<String>();
+    uniqueAuthorities.add(packageName + ".cdv.core.file.provider");
+    uniqueAuthorities.add(packageName + ".cordova.sms.provider");
+
+    try {
+      if (Build.VERSION.SDK_INT >= 33) {
+        packageInfo = cordova.getActivity().getPackageManager().getPackageInfo(
+          packageName,
+          PackageManager.PackageInfoFlags.of(PackageManager.GET_PROVIDERS)
+        );
+      } else {
+        packageInfo = cordova.getActivity().getPackageManager().getPackageInfo(
+          packageName,
+          PackageManager.GET_PROVIDERS
+        );
+      }
+      providers = packageInfo == null ? null : packageInfo.providers;
+      if (providers != null) {
+        for (index = 0; index < providers.length; index++) {
+          if (providers[index] == null || TextUtils.isEmpty(providers[index].authority)) {
+            continue;
+          }
+          if (
+            "androidx.core.content.FileProvider".equals(providers[index].name) ||
+            providers[index].authority.endsWith(".cdv.core.file.provider") ||
+            providers[index].authority.endsWith(".cordova.sms.provider")
+          ) {
+            uniqueAuthorities.add(providers[index].authority);
+          }
+        }
+      }
+    } catch (Exception ignored) {
+    }
+
+    return uniqueAuthorities.toArray(new String[uniqueAuthorities.size()]);
   }
 
   private void writeBytesToFile(File targetFile, byte[] bytes) throws Exception {
