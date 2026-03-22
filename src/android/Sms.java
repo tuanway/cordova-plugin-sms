@@ -66,6 +66,10 @@ import java.util.Locale;
 import java.util.UUID;
 
 public class Sms extends CordovaPlugin {
+  private interface GuardedRunnable {
+    void run() throws Throwable;
+  }
+
   private static final String ACTION_HAS_PERMISSIONS = "hasPermissions";
   private static final String ACTION_REQUEST_PERMISSIONS = "requestPermissions";
   private static final String ACTION_IS_DEFAULT_SMS_APP = "isDefaultSmsApp";
@@ -434,7 +438,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleGetSubscriptions(callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleGetSubscriptions(callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -445,7 +454,12 @@ public class Sms extends CordovaPlugin {
       cordova.getActivity().runOnUiThread(new Runnable() {
         @Override
         public void run() {
-          handleWatch(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleWatch(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -455,7 +469,12 @@ public class Sms extends CordovaPlugin {
       cordova.getActivity().runOnUiThread(new Runnable() {
         @Override
         public void run() {
-          handleUnwatch(callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleUnwatch(callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -466,7 +485,12 @@ public class Sms extends CordovaPlugin {
       cordova.getActivity().runOnUiThread(new Runnable() {
         @Override
         public void run() {
-          handleStartBackgroundWatch(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleStartBackgroundWatch(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -476,7 +500,12 @@ public class Sms extends CordovaPlugin {
       cordova.getActivity().runOnUiThread(new Runnable() {
         @Override
         public void run() {
-          handleStopBackgroundWatch(callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleStopBackgroundWatch(callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -497,7 +526,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleListThreads(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleListThreads(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -508,7 +542,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleSearchThreads(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleSearchThreads(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -519,7 +558,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleListMessages(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleListMessages(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -530,7 +574,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleSearchMessages(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleSearchMessages(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -541,7 +590,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleGetThread(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleGetThread(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -552,7 +606,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleSendSms(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleSendSms(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -563,7 +622,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleSendMms(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleSendMms(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -574,7 +638,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleMarkRead(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleMarkRead(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -585,7 +654,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleMarkUnread(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleMarkUnread(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -596,7 +670,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleDeleteThread(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleDeleteThread(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -607,7 +686,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleDeleteMessage(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleDeleteMessage(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -618,7 +702,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleRestoreMessage(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleRestoreMessage(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -629,7 +718,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleSaveDraft(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleSaveDraft(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -640,7 +734,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleListDrafts(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleListDrafts(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -651,7 +750,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleUpdateDraft(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleUpdateDraft(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -662,7 +766,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleDeleteDraft(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleDeleteDraft(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -673,7 +782,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleMoveToDraft(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleMoveToDraft(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -684,7 +798,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleResendFailed(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleResendFailed(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -695,7 +814,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleGetContacts(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleGetContacts(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -706,7 +830,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleResolveAddresses(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleResolveAddresses(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -717,7 +846,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleExportAttachment(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleExportAttachment(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -728,7 +862,12 @@ public class Sms extends CordovaPlugin {
       cordova.getThreadPool().execute(new Runnable() {
         @Override
         public void run() {
-          handleCreateAttachmentThumbnail(options, callbackContext);
+          executeGuarded(callbackContext, new GuardedRunnable() {
+            @Override
+            public void run() throws Throwable {
+              handleCreateAttachmentThumbnail(options, callbackContext);
+            }
+          });
         }
       });
       return true;
@@ -747,6 +886,41 @@ public class Sms extends CordovaPlugin {
     }
 
     return false;
+  }
+
+  private void executeGuarded(CallbackContext callbackContext, GuardedRunnable runnable) {
+    try {
+      if (runnable != null) {
+        runnable.run();
+      }
+    } catch (Throwable throwable) {
+      if (callbackContext != null) {
+        try {
+          callbackContext.error(safeThrowableMessage(throwable));
+        } catch (Exception ignored) {
+        }
+      }
+    }
+  }
+
+  private String safeThrowableMessage(Throwable throwable) {
+    String message;
+
+    if (throwable == null) {
+      return "Unknown SMS plugin error.";
+    }
+
+    message = throwable.getMessage();
+    if (!TextUtils.isEmpty(message)) {
+      return message;
+    }
+
+    message = throwable.getClass().getSimpleName();
+    if (!TextUtils.isEmpty(message)) {
+      return message;
+    }
+
+    return "Unknown SMS plugin error.";
   }
 
   @Override

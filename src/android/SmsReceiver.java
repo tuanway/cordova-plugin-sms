@@ -38,82 +38,85 @@ public class SmsReceiver extends BroadcastReceiver {
     JSONObject event;
     Uri insertedUri;
 
-    action = intent == null ? "" : intent.getAction();
+    try {
+      action = intent == null ? "" : intent.getAction();
 
-    if (
-      Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action) ||
-      "android.provider.Telephony.SMS_DELIVER".equals(action)
-    ) {
-      event = buildIncomingSmsEvent(intent);
-      if ("android.provider.Telephony.SMS_DELIVER".equals(action)) {
-        insertedUri = Sms.persistIncomingSms(
-          context,
-          event.optString("address"),
-          event.optString("body"),
-          event.optLong("date", System.currentTimeMillis()),
-          event.optInt("subscriptionId", -1)
-        );
-        if (insertedUri != null) {
-          Sms.publishProviderChangeEvent("sms", false, insertedUri, false);
+      if (
+        Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action) ||
+        "android.provider.Telephony.SMS_DELIVER".equals(action)
+      ) {
+        event = buildIncomingSmsEvent(intent);
+        if ("android.provider.Telephony.SMS_DELIVER".equals(action)) {
+          insertedUri = Sms.persistIncomingSms(
+            context,
+            event.optString("address"),
+            event.optString("body"),
+            event.optLong("date", System.currentTimeMillis()),
+            event.optInt("subscriptionId", -1)
+          );
+          if (insertedUri != null) {
+            Sms.publishProviderChangeEvent("sms", false, insertedUri, false);
+          }
         }
+        if (shouldNotifyIncomingMessage(context, action)) {
+          showIncomingNotification(context, event);
+        }
+        Sms.publishEvent(event);
+        return;
       }
-      if (shouldNotifyIncomingMessage(context, action)) {
-        showIncomingNotification(context, event);
-      }
-      Sms.publishEvent(event);
-      return;
-    }
 
-    if (
-      "android.provider.Telephony.WAP_PUSH_RECEIVED".equals(action) ||
-      "android.provider.Telephony.WAP_PUSH_DELIVER".equals(action)
-    ) {
-      int subscriptionId;
-      long previousLatestProviderId;
-      long receivedAt;
-      BroadcastReceiver.PendingResult pendingResult;
+      if (
+        "android.provider.Telephony.WAP_PUSH_RECEIVED".equals(action) ||
+        "android.provider.Telephony.WAP_PUSH_DELIVER".equals(action)
+      ) {
+        int subscriptionId;
+        long previousLatestProviderId;
+        long receivedAt;
+        BroadcastReceiver.PendingResult pendingResult;
 
-      subscriptionId = readSubscriptionId(intent);
-      previousLatestProviderId = queryLatestIncomingMmsProviderId(context);
-      receivedAt = System.currentTimeMillis();
-      event = buildIncomingMmsEvent(context, intent, previousLatestProviderId, receivedAt);
-      if (shouldNotifyIncomingMessage(context, action)) {
-        showIncomingNotification(context, event);
-      }
-      Sms.publishEvent(event);
-      if (event.optLong("providerId", 0L) > 0L) {
-        Sms.publishProviderChangeEvent(
-          "mms",
-          false,
-          Uri.parse("content://mms/" + event.optLong("providerId")),
-          false
+        subscriptionId = readSubscriptionId(intent);
+        previousLatestProviderId = queryLatestIncomingMmsProviderId(context);
+        receivedAt = System.currentTimeMillis();
+        event = buildIncomingMmsEvent(context, intent, previousLatestProviderId, receivedAt);
+        if (shouldNotifyIncomingMessage(context, action)) {
+          showIncomingNotification(context, event);
+        }
+        Sms.publishEvent(event);
+        if (event.optLong("providerId", 0L) > 0L) {
+          Sms.publishProviderChangeEvent(
+            "mms",
+            false,
+            Uri.parse("content://mms/" + event.optLong("providerId")),
+            false
+          );
+          return;
+        }
+        pendingResult = goAsync();
+        scheduleIncomingMmsRefresh(
+          context == null ? null : context.getApplicationContext(),
+          subscriptionId,
+          previousLatestProviderId,
+          receivedAt,
+          0,
+          pendingResult
         );
         return;
       }
-      pendingResult = goAsync();
-      scheduleIncomingMmsRefresh(
-        context == null ? null : context.getApplicationContext(),
-        subscriptionId,
-        previousLatestProviderId,
-        receivedAt,
-        0,
-        pendingResult
-      );
-      return;
-    }
 
-    if (Sms.BROADCAST_ACTION_SMS_SENT.equals(action)) {
-      Sms.publishEvent(buildStatusEvent("smsSentStatus", intent, getResultCode()));
-      return;
-    }
+      if (Sms.BROADCAST_ACTION_SMS_SENT.equals(action)) {
+        Sms.publishEvent(buildStatusEvent("smsSentStatus", intent, getResultCode()));
+        return;
+      }
 
-    if (Sms.BROADCAST_ACTION_SMS_DELIVERED.equals(action)) {
-      Sms.publishEvent(buildStatusEvent("smsDeliveryStatus", intent, getResultCode()));
-      return;
-    }
+      if (Sms.BROADCAST_ACTION_SMS_DELIVERED.equals(action)) {
+        Sms.publishEvent(buildStatusEvent("smsDeliveryStatus", intent, getResultCode()));
+        return;
+      }
 
-    if (Sms.BROADCAST_ACTION_MMS_SENT.equals(action)) {
-      Sms.publishEvent(buildStatusEvent("mmsSentStatus", intent, getResultCode()));
+      if (Sms.BROADCAST_ACTION_MMS_SENT.equals(action)) {
+        Sms.publishEvent(buildStatusEvent("mmsSentStatus", intent, getResultCode()));
+      }
+    } catch (Throwable ignored) {
     }
   }
 
@@ -487,7 +490,7 @@ public class SmsReceiver extends BroadcastReceiver {
           }
 
           scheduleIncomingMmsRefresh(context, subscriptionId, previousLatestProviderId, receivedAt, attempt + 1, pendingResult);
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
           finishPendingResult(pendingResult);
         }
       }
