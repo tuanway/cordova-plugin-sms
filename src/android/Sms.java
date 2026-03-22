@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.app.role.RoleManager;
+import android.content.ClipData;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.ContentResolver;
@@ -26,6 +27,9 @@ import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
+import android.util.Base64;
+
+import androidx.core.content.FileProvider;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -1614,19 +1618,19 @@ public class Sms extends CordovaPlugin {
     if (attachments != null) {
       for (index = 0; index < attachments.length(); index++) {
         JSONObject attachment;
-        String uriValue;
+        Uri attachmentUri;
 
         attachment = attachments.optJSONObject(index);
         if (attachment == null) {
           continue;
         }
 
-        uriValue = safeString(attachment.opt("uri"));
-        if (TextUtils.isEmpty(uriValue)) {
+        attachmentUri = resolveAttachmentIntentUri(attachment);
+        if (attachmentUri == null) {
           continue;
         }
 
-        streams.add(Uri.parse(uriValue));
+        streams.add(attachmentUri);
       }
     }
 
@@ -1915,10 +1919,171 @@ public class Sms extends CordovaPlugin {
     return result;
   }
 
+  private Uri resolveAttachmentIntentUri(JSONObject attachment) throws Exception {
+    String uriValue;
+    Uri parsedUri;
+    String scheme;
+
+    if (attachment == null) {
+      return null;
+    }
+
+    uriValue = safeString(attachment.opt("uri"));
+    if (!TextUtils.isEmpty(uriValue)) {
+      parsedUri = Uri.parse(uriValue);
+      scheme = safeString(parsedUri.getScheme()).toLowerCase(Locale.US);
+      if ("content".equals(scheme)) {
+        return parsedUri;
+      }
+      if ("file".equals(scheme)) {
+        return buildContentUriForFile(new File(parsedUri.getPath()));
+      }
+      if ("cdvfile".equals(scheme) && this.webView != null && this.webView.getResourceApi() != null) {
+        parsedUri = this.webView.getResourceApi().remapUri(parsedUri);
+        if (parsedUri != null) {
+          scheme = safeString(parsedUri.getScheme()).toLowerCase(Locale.US);
+          if ("content".equals(scheme)) {
+            return parsedUri;
+          }
+          if ("file".equals(scheme)) {
+            return buildContentUriForFile(new File(parsedUri.getPath()));
+          }
+        }
+      }
+      if ("data".equals(scheme)) {
+        return materializeAttachmentDataUri(uriValue, attachment);
+      }
+      return parsedUri;
+    }
+
+    if (!TextUtils.isEmpty(safeString(attachment.opt("data")))) {
+      return materializeAttachmentDataUri(safeString(attachment.opt("data")), attachment);
+    }
+
+    return null;
+  }
+
+  private Uri materializeAttachmentDataUri(String dataUri, JSONObject attachment) throws Exception {
+    int commaIndex;
+    String header;
+    String payload;
+    String mimeType;
+    String fileName;
+    String extension;
+    byte[] bytes;
+    File targetFile;
+
+    if (TextUtils.isEmpty(dataUri) || !dataUri.startsWith("data:")) {
+      return null;
+    }
+
+    commaIndex = dataUri.indexOf(',');
+    if (commaIndex <= 5) {
+      return null;
+    }
+
+    header = dataUri.substring(5, commaIndex);
+    payload = dataUri.substring(commaIndex + 1);
+    mimeType = header;
+    if (mimeType.indexOf(';') >= 0) {
+      mimeType = mimeType.substring(0, mimeType.indexOf(';'));
+    }
+    mimeType = safeString(mimeType).trim();
+    if (TextUtils.isEmpty(mimeType)) {
+      mimeType = safeString(attachment.opt("contentType"));
+    }
+    if (TextUtils.isEmpty(mimeType)) {
+      mimeType = "application/octet-stream";
+    }
+
+    if (header.indexOf(";base64") >= 0) {
+      bytes = Base64.decode(payload, Base64.DEFAULT);
+    } else {
+      bytes = payload.getBytes("UTF-8");
+    }
+
+    fileName = sanitizeFilename(safeString(attachment.opt("name")));
+    if (TextUtils.isEmpty(fileName)) {
+      extension = getExtensionForMimeType(mimeType);
+      fileName = UUID.randomUUID().toString() + (TextUtils.isEmpty(extension) ? ".bin" : extension);
+    }
+
+    targetFile = createCacheFile("outgoing_mms", fileName);
+    writeBytesToFile(targetFile, bytes);
+    return buildContentUriForFile(targetFile);
+  }
+
+  private Uri buildContentUriForFile(File file) {
+    if (file == null) {
+      return null;
+    }
+
+    return FileProvider.getUriForFile(
+      cordova.getActivity(),
+      cordova.getActivity().getPackageName() + ".cordova.sms.provider",
+      file
+    );
+  }
+
+  private void writeBytesToFile(File targetFile, byte[] bytes) throws Exception {
+    FileOutputStream outputStream;
+
+    if (targetFile == null) {
+      throw new IllegalArgumentException("Attachment file target is required.");
+    }
+
+    outputStream = new FileOutputStream(targetFile);
+    try {
+      outputStream.write(bytes);
+      outputStream.flush();
+    } finally {
+      outputStream.close();
+    }
+  }
+
+  private String getExtensionForMimeType(String mimeType) {
+    String normalized;
+
+    normalized = safeString(mimeType).toLowerCase(Locale.US);
+    if ("image/jpeg".equals(normalized) || "image/jpg".equals(normalized)) {
+      return ".jpg";
+    }
+    if ("image/png".equals(normalized)) {
+      return ".png";
+    }
+    if ("image/gif".equals(normalized)) {
+      return ".gif";
+    }
+    if ("image/webp".equals(normalized)) {
+      return ".webp";
+    }
+    if ("video/mp4".equals(normalized)) {
+      return ".mp4";
+    }
+    if ("video/3gpp".equals(normalized)) {
+      return ".3gp";
+    }
+    if ("audio/mpeg".equals(normalized)) {
+      return ".mp3";
+    }
+    if ("audio/wav".equals(normalized) || "audio/x-wav".equals(normalized)) {
+      return ".wav";
+    }
+    if ("audio/ogg".equals(normalized)) {
+      return ".ogg";
+    }
+    if ("application/pdf".equals(normalized)) {
+      return ".pdf";
+    }
+    return "";
+  }
+
   private Intent buildMmsIntent(List<String> recipients, String message, ArrayList<Uri> streams, JSONArray attachmentData, int subscriptionId) {
     Intent intent;
+    ClipData clipData;
     String mimeType;
     String addressList;
+    int index;
 
     if (streams.size() > 1) {
       intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
@@ -1936,6 +2101,21 @@ public class Sms extends CordovaPlugin {
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
     intent.setType(TextUtils.isEmpty(mimeType) ? "*/*" : mimeType);
+
+    clipData = null;
+    for (index = 0; index < streams.size(); index++) {
+      if (streams.get(index) == null) {
+        continue;
+      }
+      if (clipData == null) {
+        clipData = ClipData.newRawUri("SMS attachment", streams.get(index));
+      } else {
+        clipData.addItem(new ClipData.Item(streams.get(index)));
+      }
+    }
+    if (clipData != null) {
+      intent.setClipData(clipData);
+    }
 
     if (!TextUtils.isEmpty(addressList)) {
       intent.putExtra("address", addressList);
