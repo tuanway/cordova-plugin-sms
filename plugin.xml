@@ -109,6 +109,7 @@
     </config-file>
 
     <source-file src="src/android/res/xml/cordova_sms_file_paths.xml" target-dir="res/xml" />
+    <source-file src="src/android/com/google/android/mms/MmsException.java" target-dir="src/com/google/android/mms" />
     <source-file src="src/android/com/google/android/mms/InvalidHeaderValueException.java" target-dir="src/com/google/android/mms" />
     <source-file src="src/android/com/google/android/mms/pdu/CharacterSets.java" target-dir="src/com/google/android/mms/pdu" />
     <source-file src="src/android/com/google/android/mms/pdu/EncodedStringValue.java" target-dir="src/com/google/android/mms/pdu" />
