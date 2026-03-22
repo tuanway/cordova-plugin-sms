@@ -2177,6 +2177,7 @@ public class Sms extends CordovaPlugin {
     String mimeType;
     String fileName;
     byte[] partName;
+    byte[] partData;
     PduPart part;
 
     if (attachment == null) {
@@ -2195,6 +2196,10 @@ public class Sms extends CordovaPlugin {
 
     fileName = buildOutgoingMmsAttachmentName(attachment, index, mimeType, attachmentUri);
     partName = fileName.getBytes("UTF-8");
+    partData = readUriBytes(attachmentUri);
+    if (partData == null || partData.length == 0) {
+      return null;
+    }
 
     part = new PduPart();
     part.setContentType(mimeType.getBytes("UTF-8"));
@@ -2203,7 +2208,7 @@ public class Sms extends CordovaPlugin {
     part.setContentLocation(partName);
     part.setContentId(("attachment" + index).getBytes("UTF-8"));
     part.setContentDisposition("attachment".getBytes("UTF-8"));
-    part.setDataUri(attachmentUri);
+    part.setData(partData);
     if (mimeType.startsWith("text/")) {
       part.setCharset(CharacterSets.UTF_8);
     }
@@ -5217,6 +5222,31 @@ public class Sms extends CordovaPlugin {
     }
 
     return total;
+  }
+
+  private byte[] readUriBytes(Uri uri) throws Exception {
+    InputStream inputStream;
+    ByteArrayOutputStream outputStream;
+    byte[] buffer;
+    int count;
+
+    inputStream = cordova.getActivity().getContentResolver().openInputStream(uri);
+    if (inputStream == null) {
+      throw new IllegalArgumentException("Attachment URI could not be opened.");
+    }
+
+    outputStream = new ByteArrayOutputStream();
+    buffer = new byte[8192];
+
+    try {
+      while ((count = inputStream.read(buffer)) > 0) {
+        outputStream.write(buffer, 0, count);
+      }
+      return outputStream.toByteArray();
+    } finally {
+      inputStream.close();
+      outputStream.close();
+    }
   }
 
   private File createCacheFile(String directoryName, String fileName) {
