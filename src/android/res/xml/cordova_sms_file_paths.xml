@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <cache-path name="cordova_sms_cache" path="cordova_sms/" />
+  <files-path name="cordova_sms_files" path="cordova_sms/" />
+</paths>
