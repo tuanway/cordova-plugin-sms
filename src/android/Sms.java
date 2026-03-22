@@ -1595,6 +1595,9 @@ public class Sms extends CordovaPlugin {
     if (!options.optBoolean("forceIntent", false) && TextUtils.isEmpty(pduUri) && Build.VERSION.SDK_INT >= 21 && attachmentCount > 0) {
       try {
         pduUri = buildOutgoingMmsPduUri(options).toString();
+      } catch (OutOfMemoryError error) {
+        callbackContext.error("Out of memory while preparing MMS attachment.");
+        return;
       } catch (Exception exception) {
         callbackContext.error(exception.getMessage());
         return;
@@ -2171,11 +2174,17 @@ public class Sms extends CordovaPlugin {
       return uri;
     }
 
-    if (!needsImageCompression(uri)) {
+    try {
+      if (!needsImageCompression(uri)) {
+        return uri;
+      }
+
+      return createCompressedImageAttachmentUri(uri, attachment);
+    } catch (OutOfMemoryError error) {
+      return uri;
+    } catch (Exception exception) {
       return uri;
     }
-
-    return createCompressedImageAttachmentUri(uri, attachment);
   }
 
   private String resolveAttachmentMimeTypeValue(JSONObject attachment, Uri uri) {
@@ -2306,6 +2315,8 @@ public class Sms extends CordovaPlugin {
 
     decodeOptions = new BitmapFactory.Options();
     decodeOptions.inSampleSize = calculateInSampleSize(bounds, MMS_IMAGE_MAX_WIDTH, MMS_IMAGE_MAX_HEIGHT);
+    decodeOptions.inPreferredConfig = Bitmap.Config.RGB_565;
+    decodeOptions.inDither = true;
     bitmap = decodeBitmap(sourceUri, decodeOptions);
     if (bitmap == null) {
       return sourceUri;
@@ -4674,24 +4685,38 @@ public class Sms extends CordovaPlugin {
 
     decodeOptions = new BitmapFactory.Options();
     decodeOptions.inSampleSize = calculateInSampleSize(bounds, maxWidth, maxHeight);
-    bitmap = decodeBitmap(uri, decodeOptions);
-    if (bitmap == null) {
-      throw new IllegalArgumentException("Unable to decode attachment image.");
-    }
-
-    targetFile = createCacheFile("thumbnails", UUID.randomUUID().toString() + ".jpg");
+    decodeOptions.inPreferredConfig = Bitmap.Config.RGB_565;
+    decodeOptions.inDither = true;
+    bitmap = null;
+    targetFile = null;
+    memoryStream = null;
+    outputStream = null;
     thumbnailBytes = new byte[0];
-    memoryStream = new ByteArrayOutputStream();
-    outputStream = new FileOutputStream(targetFile);
     try {
+      bitmap = decodeBitmap(uri, decodeOptions);
+      if (bitmap == null) {
+        throw new IllegalArgumentException("Unable to decode attachment image.");
+      }
+
+      targetFile = createCacheFile("thumbnails", UUID.randomUUID().toString() + ".jpg");
+      memoryStream = new ByteArrayOutputStream();
+      outputStream = new FileOutputStream(targetFile);
       bitmap.compress(Bitmap.CompressFormat.JPEG, quality, memoryStream);
       thumbnailBytes = memoryStream.toByteArray();
       outputStream.write(thumbnailBytes);
       outputStream.flush();
+    } catch (OutOfMemoryError error) {
+      throw new IllegalStateException("Out of memory while creating attachment thumbnail.", error);
     } finally {
-      memoryStream.close();
-      outputStream.close();
-      bitmap.recycle();
+      if (memoryStream != null) {
+        memoryStream.close();
+      }
+      if (outputStream != null) {
+        outputStream.close();
+      }
+      if (bitmap != null) {
+        bitmap.recycle();
+      }
     }
 
     result = new JSONObject();
@@ -4713,6 +4738,8 @@ public class Sms extends CordovaPlugin {
 
     try {
       BitmapFactory.decodeStream(stream, null, options);
+    } catch (OutOfMemoryError error) {
+      throw new IllegalStateException("Out of memory while reading attachment image.", error);
     } finally {
       stream.close();
     }
@@ -4728,6 +4755,8 @@ public class Sms extends CordovaPlugin {
 
     try {
       return BitmapFactory.decodeStream(stream, null, options);
+    } catch (OutOfMemoryError error) {
+      throw new IllegalStateException("Out of memory while decoding attachment image.", error);
     } finally {
       stream.close();
     }
