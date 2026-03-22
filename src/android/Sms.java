@@ -1625,7 +1625,12 @@ public class Sms extends CordovaPlugin {
           continue;
         }
 
-        attachmentUri = resolveAttachmentIntentUri(attachment);
+        try {
+          attachmentUri = resolveAttachmentIntentUri(attachment);
+        } catch (Exception exception) {
+          callbackContext.error(exception.getMessage());
+          return;
+        }
         if (attachmentUri == null) {
           continue;
         }
