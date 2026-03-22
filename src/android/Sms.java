@@ -10,11 +10,14 @@ import android.content.Context;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
 import android.content.SharedPreferences;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -40,6 +43,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -96,6 +100,11 @@ public class Sms extends CordovaPlugin {
 
   private static final int REQUEST_SMS_PERMISSIONS = 9100;
   private static final int REQUEST_DEFAULT_SMS_APP = 9101;
+  private static final int MMS_IMAGE_MAX_WIDTH = 1600;
+  private static final int MMS_IMAGE_MAX_HEIGHT = 1600;
+  private static final int MMS_IMAGE_MAX_BYTES = 900 * 1024;
+  private static final int MMS_IMAGE_JPEG_QUALITY = 82;
+  private static final int MMS_IMAGE_MIN_JPEG_QUALITY = 56;
 
   public static final String PREFS_NAME = "com.cordova.sms";
   public static final String PREF_KEY_DELETED_SMS = "deletedSms";
@@ -1940,34 +1949,255 @@ public class Sms extends CordovaPlugin {
       parsedUri = Uri.parse(uriValue);
       scheme = safeString(parsedUri.getScheme()).toLowerCase(Locale.US);
       if ("content".equals(scheme)) {
-        return parsedUri;
+        return maybeCompressImageAttachmentUri(parsedUri, attachment);
       }
       if ("file".equals(scheme)) {
-        return buildContentUriForFile(new File(parsedUri.getPath()));
+        return maybeCompressImageAttachmentUri(buildContentUriForFile(new File(parsedUri.getPath())), attachment);
       }
       if ("cdvfile".equals(scheme) && this.webView != null && this.webView.getResourceApi() != null) {
         parsedUri = this.webView.getResourceApi().remapUri(parsedUri);
         if (parsedUri != null) {
           scheme = safeString(parsedUri.getScheme()).toLowerCase(Locale.US);
           if ("content".equals(scheme)) {
-            return parsedUri;
+            return maybeCompressImageAttachmentUri(parsedUri, attachment);
           }
           if ("file".equals(scheme)) {
-            return buildContentUriForFile(new File(parsedUri.getPath()));
+            return maybeCompressImageAttachmentUri(buildContentUriForFile(new File(parsedUri.getPath())), attachment);
           }
         }
       }
       if ("data".equals(scheme)) {
-        return materializeAttachmentDataUri(uriValue, attachment);
+        return maybeCompressImageAttachmentUri(materializeAttachmentDataUri(uriValue, attachment), attachment);
       }
       return parsedUri;
     }
 
     if (!TextUtils.isEmpty(safeString(attachment.opt("data")))) {
-      return materializeAttachmentDataUri(safeString(attachment.opt("data")), attachment);
+      return maybeCompressImageAttachmentUri(materializeAttachmentDataUri(safeString(attachment.opt("data")), attachment), attachment);
     }
 
     return null;
+  }
+
+  private Uri maybeCompressImageAttachmentUri(Uri uri, JSONObject attachment) throws Exception {
+    String mimeType;
+
+    if (uri == null) {
+      return null;
+    }
+
+    mimeType = resolveAttachmentMimeTypeValue(attachment, uri);
+    if (!shouldCompressImageAttachment(mimeType)) {
+      return uri;
+    }
+
+    if (!needsImageCompression(uri)) {
+      return uri;
+    }
+
+    return createCompressedImageAttachmentUri(uri, attachment);
+  }
+
+  private String resolveAttachmentMimeTypeValue(JSONObject attachment, Uri uri) {
+    String mimeType;
+
+    mimeType = attachment == null ? "" : safeString(firstNonEmpty(
+      safeString(attachment.opt("type")),
+      safeString(attachment.opt("contentType"))
+    ));
+    if (!TextUtils.isEmpty(mimeType)) {
+      return mimeType.toLowerCase(Locale.US);
+    }
+
+    if (uri != null && cordova != null && cordova.getActivity() != null) {
+      try {
+        mimeType = safeString(cordova.getActivity().getContentResolver().getType(uri));
+      } catch (Exception ignored) {
+        mimeType = "";
+      }
+      if (!TextUtils.isEmpty(mimeType)) {
+        return mimeType.toLowerCase(Locale.US);
+      }
+    }
+
+    mimeType = guessMimeTypeFromName(attachment == null ? "" : safeString(attachment.opt("name")));
+    if (!TextUtils.isEmpty(mimeType)) {
+      return mimeType;
+    }
+
+    return guessMimeTypeFromName(uri == null ? "" : safeString(uri.getLastPathSegment()));
+  }
+
+  private String guessMimeTypeFromName(String name) {
+    String normalized;
+
+    normalized = safeString(name).toLowerCase(Locale.US);
+    if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+      return "image/jpeg";
+    }
+    if (normalized.endsWith(".png")) {
+      return "image/png";
+    }
+    if (normalized.endsWith(".gif")) {
+      return "image/gif";
+    }
+    if (normalized.endsWith(".webp")) {
+      return "image/webp";
+    }
+    if (normalized.endsWith(".bmp")) {
+      return "image/bmp";
+    }
+    return "";
+  }
+
+  private boolean shouldCompressImageAttachment(String mimeType) {
+    String normalized;
+
+    normalized = safeString(mimeType).toLowerCase(Locale.US);
+    if (!normalized.startsWith("image/")) {
+      return false;
+    }
+
+    return !"image/gif".equals(normalized);
+  }
+
+  private boolean needsImageCompression(Uri uri) throws Exception {
+    BitmapFactory.Options bounds;
+    long byteSize;
+
+    if (uri == null) {
+      return false;
+    }
+
+    bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+    decodeBitmapBounds(uri, bounds);
+    byteSize = getUriByteSize(uri);
+
+    return bounds.outWidth > MMS_IMAGE_MAX_WIDTH
+      || bounds.outHeight > MMS_IMAGE_MAX_HEIGHT
+      || byteSize > MMS_IMAGE_MAX_BYTES;
+  }
+
+  private long getUriByteSize(Uri uri) {
+    AssetFileDescriptor descriptor;
+    long length;
+
+    if (uri == null) {
+      return 0L;
+    }
+
+    if ("file".equalsIgnoreCase(safeString(uri.getScheme()))) {
+      return new File(safeString(uri.getPath())).length();
+    }
+
+    descriptor = null;
+    try {
+      descriptor = cordova.getActivity().getContentResolver().openAssetFileDescriptor(uri, "r");
+      if (descriptor == null) {
+        return 0L;
+      }
+      length = descriptor.getLength();
+      return length > 0L ? length : 0L;
+    } catch (Exception ignored) {
+      return 0L;
+    } finally {
+      if (descriptor != null) {
+        try {
+          descriptor.close();
+        } catch (Exception ignored) {
+        }
+      }
+    }
+  }
+
+  private Uri createCompressedImageAttachmentUri(Uri sourceUri, JSONObject attachment) throws Exception {
+    BitmapFactory.Options bounds;
+    BitmapFactory.Options decodeOptions;
+    Bitmap bitmap;
+    Bitmap flattenedBitmap;
+    byte[] jpegBytes;
+    File targetFile;
+    String fileName;
+
+    bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+    decodeBitmapBounds(sourceUri, bounds);
+
+    decodeOptions = new BitmapFactory.Options();
+    decodeOptions.inSampleSize = calculateInSampleSize(bounds, MMS_IMAGE_MAX_WIDTH, MMS_IMAGE_MAX_HEIGHT);
+    bitmap = decodeBitmap(sourceUri, decodeOptions);
+    if (bitmap == null) {
+      return sourceUri;
+    }
+
+    flattenedBitmap = bitmap;
+    if (bitmap.hasAlpha()) {
+      flattenedBitmap = flattenBitmapForJpeg(bitmap);
+    }
+
+    try {
+      jpegBytes = compressBitmapForMms(flattenedBitmap);
+      fileName = sanitizeFilename(safeString(attachment == null ? "" : attachment.opt("name")));
+      if (TextUtils.isEmpty(fileName)) {
+        fileName = UUID.randomUUID().toString() + ".jpg";
+      } else {
+        fileName = stripFileExtension(fileName) + ".jpg";
+      }
+      targetFile = createCacheFile("outgoing_mms", fileName);
+      writeBytesToFile(targetFile, jpegBytes);
+      return buildContentUriForFile(targetFile);
+    } finally {
+      if (flattenedBitmap != bitmap) {
+        flattenedBitmap.recycle();
+      }
+      bitmap.recycle();
+    }
+  }
+
+  private Bitmap flattenBitmapForJpeg(Bitmap bitmap) {
+    Bitmap flattenedBitmap;
+    Canvas canvas;
+
+    flattenedBitmap = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(), Bitmap.Config.RGB_565);
+    canvas = new Canvas(flattenedBitmap);
+    canvas.drawColor(Color.WHITE);
+    canvas.drawBitmap(bitmap, 0f, 0f, null);
+    return flattenedBitmap;
+  }
+
+  private byte[] compressBitmapForMms(Bitmap bitmap) throws Exception {
+    ByteArrayOutputStream outputStream;
+    int quality;
+
+    outputStream = new ByteArrayOutputStream();
+    quality = MMS_IMAGE_JPEG_QUALITY;
+
+    try {
+      while (true) {
+        outputStream.reset();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream);
+        if (outputStream.size() <= MMS_IMAGE_MAX_BYTES || quality <= MMS_IMAGE_MIN_JPEG_QUALITY) {
+          break;
+        }
+        quality -= 8;
+      }
+      return outputStream.toByteArray();
+    } finally {
+      outputStream.close();
+    }
+  }
+
+  private String stripFileExtension(String value) {
+    int dotIndex;
+    String normalized;
+
+    normalized = safeString(value);
+    dotIndex = normalized.lastIndexOf('.');
+    if (dotIndex <= 0) {
+      return normalized;
+    }
+    return normalized.substring(0, dotIndex);
   }
 
   private Uri materializeAttachmentDataUri(String dataUri, JSONObject attachment) throws Exception {
