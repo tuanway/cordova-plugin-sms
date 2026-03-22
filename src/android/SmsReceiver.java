@@ -46,6 +46,7 @@ public class SmsReceiver extends BroadcastReceiver {
         "android.provider.Telephony.SMS_DELIVER".equals(action)
       ) {
         event = buildIncomingSmsEvent(intent);
+        logReceiverEvent(context, "receiver_incoming_sms", event);
         if ("android.provider.Telephony.SMS_DELIVER".equals(action)) {
           insertedUri = Sms.persistIncomingSms(
             context,
@@ -78,11 +79,13 @@ public class SmsReceiver extends BroadcastReceiver {
         previousLatestProviderId = queryLatestIncomingMmsProviderId(context);
         receivedAt = System.currentTimeMillis();
         event = buildIncomingMmsEvent(context, intent, previousLatestProviderId, receivedAt);
+        logReceiverEvent(context, "receiver_incoming_mms", event);
         if (shouldNotifyIncomingMessage(context, action)) {
           showIncomingNotification(context, event);
         }
         Sms.publishEvent(event);
         if (event.optLong("providerId", 0L) > 0L) {
+          Sms.addDebugLog(context, "receiver_incoming_mms_provider_ready", buildMmsRefreshLogDetails(event, 0));
           Sms.publishProviderChangeEvent(
             "mms",
             false,
@@ -104,20 +107,43 @@ public class SmsReceiver extends BroadcastReceiver {
       }
 
       if (Sms.BROADCAST_ACTION_SMS_SENT.equals(action)) {
-        Sms.publishEvent(buildStatusEvent("smsSentStatus", intent, getResultCode()));
+        event = buildStatusEvent("smsSentStatus", intent, getResultCode());
+        logReceiverEvent(context, "receiver_sms_sent_status", event);
+        Sms.publishEvent(event);
         return;
       }
 
       if (Sms.BROADCAST_ACTION_SMS_DELIVERED.equals(action)) {
-        Sms.publishEvent(buildStatusEvent("smsDeliveryStatus", intent, getResultCode()));
+        event = buildStatusEvent("smsDeliveryStatus", intent, getResultCode());
+        logReceiverEvent(context, "receiver_sms_delivery_status", event);
+        Sms.publishEvent(event);
         return;
       }
 
       if (Sms.BROADCAST_ACTION_MMS_SENT.equals(action)) {
-        Sms.publishEvent(buildStatusEvent("mmsSentStatus", intent, getResultCode()));
+        event = buildStatusEvent("mmsSentStatus", intent, getResultCode());
+        logReceiverEvent(context, "receiver_mms_sent_status", event);
+        Sms.publishEvent(event);
       }
     } catch (Throwable ignored) {
     }
+  }
+
+  private void logReceiverEvent(Context context, String eventName, JSONObject event) {
+    JSONObject details;
+
+    details = new JSONObject();
+    try {
+      details.put("type", safeString(event == null ? "" : event.opt("type")));
+      details.put("action", safeString(event == null ? "" : event.opt("action")));
+      details.put("threadKey", safeString(event == null ? "" : event.opt("threadKey")));
+      details.put("address", safeString(event == null ? "" : event.opt("address")));
+      details.put("attachmentCount", event == null ? 0 : event.optInt("attachmentCount", 0));
+      details.put("bodyLength", safeString(event == null ? "" : event.opt("body")).length());
+      details.put("resultCode", event == null ? 0 : event.optInt("resultCode", 0));
+    } catch (JSONException ignored) {
+    }
+    Sms.addDebugLog(context, eventName, details);
   }
 
   private boolean shouldNotifyIncomingMessage(Context context, String action) {
@@ -467,6 +493,7 @@ public class SmsReceiver extends BroadcastReceiver {
     long delayMs;
 
     delayMs = attempt <= 0 ? MMS_PROVIDER_REFRESH_INITIAL_DELAY_MS : MMS_PROVIDER_REFRESH_RETRY_DELAY_MS;
+    Sms.addDebugLog(context, "receiver_mms_refresh_scheduled", buildMmsRefreshLogDetails(null, attempt));
     new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
       @Override
       public void run() {
@@ -477,6 +504,7 @@ public class SmsReceiver extends BroadcastReceiver {
           refreshedEvent = queryLatestMms(context, subscriptionId, previousLatestProviderId, receivedAt);
           if (refreshedEvent != null && refreshedEvent.optLong("providerId", 0L) > 0L) {
             providerId = refreshedEvent.optLong("providerId", 0L);
+            Sms.addDebugLog(context, "receiver_mms_refresh_success", buildMmsRefreshLogDetails(refreshedEvent, attempt));
             Sms.publishEvent(refreshedEvent);
             Sms.publishProviderChangeEvent("mms", false, Uri.parse("content://mms/" + providerId), false);
             finishPendingResult(pendingResult);
@@ -484,6 +512,7 @@ public class SmsReceiver extends BroadcastReceiver {
           }
 
           if (attempt + 1 >= MMS_PROVIDER_REFRESH_MAX_ATTEMPTS) {
+            Sms.addDebugLog(context, "receiver_mms_refresh_timeout", buildMmsRefreshLogDetails(refreshedEvent, attempt));
             Sms.publishProviderChangeEvent("mms", false, Uri.parse("content://mms"), false);
             finishPendingResult(pendingResult);
             return;
@@ -491,10 +520,25 @@ public class SmsReceiver extends BroadcastReceiver {
 
           scheduleIncomingMmsRefresh(context, subscriptionId, previousLatestProviderId, receivedAt, attempt + 1, pendingResult);
         } catch (Throwable ignored) {
+          Sms.addDebugLog(context, "receiver_mms_refresh_error", buildMmsRefreshLogDetails(null, attempt));
           finishPendingResult(pendingResult);
         }
       }
     }, delayMs);
+  }
+
+  private JSONObject buildMmsRefreshLogDetails(JSONObject event, int attempt) {
+    JSONObject details;
+
+    details = new JSONObject();
+    try {
+      details.put("attempt", attempt);
+      details.put("providerId", event == null ? 0L : event.optLong("providerId", 0L));
+      details.put("threadKey", safeString(event == null ? "" : event.opt("threadKey")));
+      details.put("attachmentCount", event == null ? 0 : event.optInt("attachmentCount", 0));
+    } catch (JSONException ignored) {
+    }
+    return details;
   }
 
   private void finishPendingResult(BroadcastReceiver.PendingResult pendingResult) {

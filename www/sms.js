@@ -183,6 +183,14 @@
       exec(success, error, "Sms", "consumeLaunchContext", []);
     },
 
+    getDebugLogs: function(success, error) {
+      exec(success, error, "Sms", "getDebugLogs", []);
+    },
+
+    clearDebugLogs: function(success, error) {
+      exec(success, error, "Sms", "clearDebugLogs", []);
+    },
+
     on: function(eventName, handler) {
       if (typeof handler !== "function" || !eventName) {
         return;

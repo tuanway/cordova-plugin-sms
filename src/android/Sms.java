@@ -103,6 +103,8 @@ public class Sms extends CordovaPlugin {
   private static final String ACTION_RESOLVE_ADDRESSES = "resolveAddresses";
   private static final String ACTION_EXPORT_ATTACHMENT = "exportAttachment";
   private static final String ACTION_CREATE_ATTACHMENT_THUMBNAIL = "createAttachmentThumbnail";
+  private static final String ACTION_GET_DEBUG_LOGS = "getDebugLogs";
+  private static final String ACTION_CLEAR_DEBUG_LOGS = "clearDebugLogs";
   private static final String ACTION_GET_THREAD_SETTINGS = "getThreadSettings";
   private static final String ACTION_SET_THREAD_SETTINGS = "setThreadSettings";
 
@@ -123,6 +125,7 @@ public class Sms extends CordovaPlugin {
   public static final String PREF_KEY_THREAD_SETTINGS = "threadSettings";
   public static final String PREF_KEY_BACKGROUND_WATCH = "backgroundWatch";
   public static final String PREF_KEY_BACKGROUND_WATCH_OPTIONS = "backgroundWatchOptions";
+  public static final String PREF_KEY_DEBUG_LOGS = "debugLogs";
 
   private static final String[] READ_PERMISSIONS = new String[] {
     Manifest.permission.READ_SMS
@@ -151,6 +154,8 @@ public class Sms extends CordovaPlugin {
 
   private static final Object EVENT_LOCK = new Object();
   private static final Object LAUNCH_CONTEXT_LOCK = new Object();
+  private static final Object DEBUG_LOG_LOCK = new Object();
+  private static final int MAX_DEBUG_LOG_ENTRIES = 400;
   private static final ArrayList<JSONObject> PENDING_EVENTS = new ArrayList<JSONObject>();
   private static Sms activeInstance;
   private static JSONObject pendingLaunchContext;
@@ -518,6 +523,17 @@ public class Sms extends CordovaPlugin {
 
     if (ACTION_CONSUME_LAUNCH_CONTEXT.equals(action)) {
       callbackContext.success(consumePendingLaunchContext());
+      return true;
+    }
+
+    if (ACTION_GET_DEBUG_LOGS.equals(action)) {
+      callbackContext.success(getDebugLogsJson());
+      return true;
+    }
+
+    if (ACTION_CLEAR_DEBUG_LOGS.equals(action)) {
+      clearDebugLogsJson();
+      callbackContext.success();
       return true;
     }
 
@@ -894,6 +910,13 @@ public class Sms extends CordovaPlugin {
         runnable.run();
       }
     } catch (Throwable throwable) {
+      try {
+        JSONObject details = new JSONObject();
+        details.put("message", safeThrowableMessage(throwable));
+        details.put("type", throwable == null ? "" : throwable.getClass().getSimpleName());
+        addDebugLog("execute_guarded_error", details);
+      } catch (JSONException ignored) {
+      }
       if (callbackContext != null) {
         try {
           callbackContext.error(safeThrowableMessage(throwable));
@@ -921,6 +944,116 @@ public class Sms extends CordovaPlugin {
     }
 
     return "Unknown SMS plugin error.";
+  }
+
+  private Context getDebugLogContext() {
+    Context context;
+
+    context = null;
+    if (cordova != null && cordova.getActivity() != null) {
+      context = cordova.getActivity().getApplicationContext();
+      if (context == null) {
+        context = cordova.getActivity();
+      }
+    }
+
+    return context;
+  }
+
+  public static void addDebugLog(Context context, String eventName) {
+    addDebugLog(context, eventName, null);
+  }
+
+  public static void addDebugLog(Context context, String eventName, JSONObject details) {
+    JSONArray entries;
+    JSONObject entry;
+
+    if (context == null) {
+      return;
+    }
+
+    entry = new JSONObject();
+    try {
+      entry.put("timestamp", System.currentTimeMillis());
+      entry.put("event", eventName == null ? "" : eventName);
+      entry.put("details", details == null ? new JSONObject() : copyJson(details));
+    } catch (JSONException ignored) {
+    }
+
+    synchronized (DEBUG_LOG_LOCK) {
+      entries = readDebugLogs(context);
+      entries.put(entry);
+      writeDebugLogs(context, trimDebugLogs(entries));
+    }
+  }
+
+  private void addDebugLog(String eventName) {
+    addDebugLog(getDebugLogContext(), eventName, null);
+  }
+
+  private void addDebugLog(String eventName, JSONObject details) {
+    addDebugLog(getDebugLogContext(), eventName, details);
+  }
+
+  private JSONArray getDebugLogsJson() {
+    synchronized (DEBUG_LOG_LOCK) {
+      return copyJsonArray(readDebugLogs(getDebugLogContext()));
+    }
+  }
+
+  private void clearDebugLogsJson() {
+    synchronized (DEBUG_LOG_LOCK) {
+      writeDebugLogs(getDebugLogContext(), new JSONArray());
+    }
+  }
+
+  private static JSONArray readDebugLogs(Context context) {
+    SharedPreferences preferences;
+    String raw;
+
+    if (context == null) {
+      return new JSONArray();
+    }
+
+    preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    raw = preferences.getString(PREF_KEY_DEBUG_LOGS, "");
+    if (TextUtils.isEmpty(raw)) {
+      return new JSONArray();
+    }
+
+    try {
+      return new JSONArray(raw);
+    } catch (JSONException ignored) {
+      return new JSONArray();
+    }
+  }
+
+  private static void writeDebugLogs(Context context, JSONArray entries) {
+    SharedPreferences preferences;
+
+    if (context == null) {
+      return;
+    }
+
+    preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    preferences.edit().putString(PREF_KEY_DEBUG_LOGS, entries == null ? "[]" : entries.toString()).apply();
+  }
+
+  private static JSONArray trimDebugLogs(JSONArray entries) {
+    JSONArray trimmed;
+    int startIndex;
+    int index;
+
+    if (entries == null || entries.length() <= MAX_DEBUG_LOG_ENTRIES) {
+      return entries == null ? new JSONArray() : entries;
+    }
+
+    trimmed = new JSONArray();
+    startIndex = Math.max(0, entries.length() - MAX_DEBUG_LOG_ENTRIES);
+    for (index = startIndex; index < entries.length(); index++) {
+      trimmed.put(entries.opt(index));
+    }
+    return trimmed;
   }
 
   @Override
@@ -1740,14 +1873,32 @@ public class Sms extends CordovaPlugin {
   }
 
   private void handleSendSms(JSONObject options, CallbackContext callbackContext) {
+    JSONObject logDetails;
+
+    logDetails = new JSONObject();
+    try {
+      logDetails.put("recipientCount", normalizeRecipients(options.optJSONArray("recipients")).size());
+      logDetails.put("messageLength", safeString(options.opt("message")).length());
+    } catch (JSONException ignored) {
+    }
+    addDebugLog("send_sms_start", logDetails);
+
     if (!hasPermissions(SEND_PERMISSIONS)) {
+      addDebugLog("send_sms_permission_denied", logDetails);
       callbackContext.error("SEND_SMS permission is required.");
       return;
     }
 
     try {
-      callbackContext.success(sendSmsInternal(options));
+      JSONObject result = sendSmsInternal(options);
+      addDebugLog("send_sms_success", result);
+      callbackContext.success(result);
     } catch (Exception exception) {
+      try {
+        logDetails.put("error", exception.getMessage());
+      } catch (JSONException ignored) {
+      }
+      addDebugLog("send_sms_error", logDetails);
       callbackContext.error(exception.getMessage());
     }
   }
@@ -1761,29 +1912,57 @@ public class Sms extends CordovaPlugin {
     List<String> recipients;
     Bundle configOverrides;
     SmsManager smsManager;
+    JSONObject logDetails;
 
     pduUri = safeString(options.opt("pduUri"));
     recipients = normalizeRecipients(options.optJSONArray("recipients"));
     attachmentCount = getJsonArrayLength(options.optJSONArray("attachments"));
+    logDetails = new JSONObject();
+    try {
+      logDetails.put("recipientCount", recipients.size());
+      logDetails.put("attachmentCount", attachmentCount);
+      logDetails.put("messageLength", safeString(options.opt("message")).length());
+      logDetails.put("hasPduUri", !TextUtils.isEmpty(pduUri));
+      logDetails.put("forceIntent", options.optBoolean("forceIntent", false));
+    } catch (JSONException ignored) {
+    }
+    addDebugLog("send_mms_start", logDetails);
 
     if (!options.optBoolean("forceIntent", false) && TextUtils.isEmpty(pduUri) && Build.VERSION.SDK_INT >= 21 && attachmentCount > 0) {
       try {
         pduUri = buildOutgoingMmsPduUri(options).toString();
+        try {
+          logDetails.put("builtPduUri", !TextUtils.isEmpty(pduUri));
+        } catch (JSONException ignored) {
+        }
+        addDebugLog("send_mms_pdu_ready", logDetails);
       } catch (OutOfMemoryError error) {
+        try {
+          logDetails.put("error", "Out of memory while preparing MMS attachment.");
+        } catch (JSONException ignored) {
+        }
+        addDebugLog("send_mms_error", logDetails);
         callbackContext.error("Out of memory while preparing MMS attachment.");
         return;
       } catch (Exception exception) {
+        try {
+          logDetails.put("error", exception.getMessage());
+        } catch (JSONException ignored) {
+        }
+        addDebugLog("send_mms_error", logDetails);
         callbackContext.error(exception.getMessage());
         return;
       }
     }
 
     if (options.optBoolean("forceIntent", false) || TextUtils.isEmpty(pduUri) || Build.VERSION.SDK_INT < 21) {
+      addDebugLog("send_mms_fallback_intent", logDetails);
       handleSendMmsIntent(options, callbackContext);
       return;
     }
 
     if (!hasPermissions(SEND_PERMISSIONS)) {
+      addDebugLog("send_mms_permission_denied", logDetails);
       callbackContext.error("SEND_SMS permission is required.");
       return;
     }
@@ -1802,8 +1981,17 @@ public class Sms extends CordovaPlugin {
         configOverrides,
         buildStatusPendingIntent(BROADCAST_ACTION_MMS_SENT, requestId, "", 0, 0, 1, subscriptionId)
       );
-      callbackContext.success(buildSendResult("mms", recipients.size(), attachmentCount, requestId, subscriptionId));
+      JSONObject result = buildSendResult("mms", recipients.size(), attachmentCount, requestId, subscriptionId);
+      addDebugLog("send_mms_success", result);
+      callbackContext.success(result);
     } catch (Exception exception) {
+      try {
+        logDetails.put("requestId", requestId);
+        logDetails.put("subscriptionId", subscriptionId);
+        logDetails.put("error", exception.getMessage());
+      } catch (JSONException ignored) {
+      }
+      addDebugLog("send_mms_error", logDetails);
       callbackContext.error(exception.getMessage());
     }
   }
@@ -1817,6 +2005,7 @@ public class Sms extends CordovaPlugin {
     int index;
     int subscriptionId;
     boolean useChooser;
+    JSONObject logDetails;
 
     attachments = options.optJSONArray("attachments");
     recipients = normalizeRecipients(options.optJSONArray("recipients"));
@@ -1824,6 +2013,16 @@ public class Sms extends CordovaPlugin {
     streams = new ArrayList<Uri>();
     subscriptionId = resolveRequestedSubscriptionId(options);
     useChooser = options.optBoolean("useChooser", false);
+    logDetails = new JSONObject();
+    try {
+      logDetails.put("recipientCount", recipients.size());
+      logDetails.put("attachmentCount", getJsonArrayLength(attachments));
+      logDetails.put("messageLength", message.length());
+      logDetails.put("subscriptionId", subscriptionId);
+      logDetails.put("useChooser", useChooser);
+    } catch (JSONException ignored) {
+    }
+    addDebugLog("send_mms_intent_start", logDetails);
 
     if (attachments != null) {
       for (index = 0; index < attachments.length(); index++) {
@@ -1838,11 +2037,17 @@ public class Sms extends CordovaPlugin {
         try {
           attachmentUri = resolveAttachmentIntentUri(attachment);
         } catch (Exception exception) {
+          try {
+            logDetails.put("error", exception.getMessage());
+            logDetails.put("failedAttachmentIndex", index);
+          } catch (JSONException ignored) {
+          }
+          addDebugLog("send_mms_intent_error", logDetails);
           callbackContext.error(exception.getMessage());
           return;
         }
         if (attachmentUri == null) {
-          continue;
+            continue;
         }
 
         streams.add(attachmentUri);
@@ -1853,10 +2058,22 @@ public class Sms extends CordovaPlugin {
 
     try {
       cordova.getActivity().startActivity(intent);
-      callbackContext.success(buildSendResult("mms_intent", recipients.size(), streams.size(), "", subscriptionId));
+      JSONObject result = buildSendResult("mms_intent", recipients.size(), streams.size(), "", subscriptionId);
+      addDebugLog("send_mms_intent_success", result);
+      callbackContext.success(result);
     } catch (ActivityNotFoundException exception) {
+      try {
+        logDetails.put("error", "No compatible messaging activity found.");
+      } catch (JSONException ignored) {
+      }
+      addDebugLog("send_mms_intent_error", logDetails);
       callbackContext.error("No compatible messaging activity found.");
     } catch (Exception exception) {
+      try {
+        logDetails.put("error", exception.getMessage());
+      } catch (JSONException ignored) {
+      }
+      addDebugLog("send_mms_intent_error", logDetails);
       callbackContext.error(exception.getMessage());
     }
   }
@@ -4808,6 +5025,7 @@ public class Sms extends CordovaPlugin {
     File targetFile;
     long bytesCopied;
     JSONObject result;
+    JSONObject logDetails;
 
     attachment = options.optJSONObject("attachment");
     if (attachment == null) {
@@ -4816,6 +5034,13 @@ public class Sms extends CordovaPlugin {
 
     uri = Uri.parse(firstNonEmpty(safeString(attachment.opt("uri")), safeString(options.opt("uri"))));
     name = sanitizeFilename(firstNonEmpty(safeString(attachment.opt("name")), safeString(options.opt("name"))));
+    logDetails = new JSONObject();
+    try {
+      logDetails.put("uri", uri == null ? "" : uri.toString());
+      logDetails.put("name", name);
+    } catch (JSONException ignored) {
+    }
+    addDebugLog("export_attachment_start", logDetails);
     targetFile = createCacheFile("exports", TextUtils.isEmpty(name) ? "attachment.bin" : name);
     bytesCopied = copyUriToFile(uri, targetFile);
 
@@ -4825,6 +5050,7 @@ public class Sms extends CordovaPlugin {
     result.put("sourceUri", uri.toString());
     result.put("bytes", bytesCopied);
     result.put("contentType", safeString(cordova.getActivity().getContentResolver().getType(uri)));
+    addDebugLog("export_attachment_success", result);
     return result;
   }
 
@@ -4842,6 +5068,7 @@ public class Sms extends CordovaPlugin {
     FileOutputStream outputStream;
     byte[] thumbnailBytes;
     JSONObject result;
+    JSONObject logDetails;
 
     attachment = options.optJSONObject("attachment");
     if (attachment == null) {
@@ -4852,6 +5079,15 @@ public class Sms extends CordovaPlugin {
     maxWidth = Math.max(1, options.optInt("maxWidth", 240));
     maxHeight = Math.max(1, options.optInt("maxHeight", 240));
     quality = Math.max(1, Math.min(100, options.optInt("quality", 80)));
+    logDetails = new JSONObject();
+    try {
+      logDetails.put("uri", uri == null ? "" : uri.toString());
+      logDetails.put("maxWidth", maxWidth);
+      logDetails.put("maxHeight", maxHeight);
+      logDetails.put("quality", quality);
+    } catch (JSONException ignored) {
+    }
+    addDebugLog("create_attachment_thumbnail_start", logDetails);
 
     bounds = new BitmapFactory.Options();
     bounds.inJustDecodeBounds = true;
@@ -4899,6 +5135,7 @@ public class Sms extends CordovaPlugin {
     result.put("dataUri", "data:image/jpeg;base64," + Base64.encodeToString(thumbnailBytes, Base64.NO_WRAP));
     result.put("width", bounds.outWidth);
     result.put("height", bounds.outHeight);
+    addDebugLog("create_attachment_thumbnail_success", result);
     return result;
   }
 
@@ -5355,6 +5592,14 @@ public class Sms extends CordovaPlugin {
       return value == null ? new JSONObject() : new JSONObject(value.toString());
     } catch (Exception ignored) {
       return new JSONObject();
+    }
+  }
+
+  private static JSONArray copyJsonArray(JSONArray value) {
+    try {
+      return value == null ? new JSONArray() : new JSONArray(value.toString());
+    } catch (Exception ignored) {
+      return new JSONArray();
     }
   }
 
