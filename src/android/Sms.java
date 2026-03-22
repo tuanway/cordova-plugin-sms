@@ -34,6 +34,14 @@ import android.util.Base64;
 
 import androidx.core.content.FileProvider;
 
+import com.google.android.mms.InvalidHeaderValueException;
+import com.google.android.mms.pdu.CharacterSets;
+import com.google.android.mms.pdu.EncodedStringValue;
+import com.google.android.mms.pdu.PduBody;
+import com.google.android.mms.pdu.PduComposer;
+import com.google.android.mms.pdu.PduPart;
+import com.google.android.mms.pdu.SendReq;
+
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.PermissionHelper;
@@ -1575,10 +1583,24 @@ public class Sms extends CordovaPlugin {
     String locationUrl;
     String requestId;
     int subscriptionId;
+    int attachmentCount;
+    List<String> recipients;
     Bundle configOverrides;
     SmsManager smsManager;
 
     pduUri = safeString(options.opt("pduUri"));
+    recipients = normalizeRecipients(options.optJSONArray("recipients"));
+    attachmentCount = getJsonArrayLength(options.optJSONArray("attachments"));
+
+    if (!options.optBoolean("forceIntent", false) && TextUtils.isEmpty(pduUri) && Build.VERSION.SDK_INT >= 21 && attachmentCount > 0) {
+      try {
+        pduUri = buildOutgoingMmsPduUri(options).toString();
+      } catch (Exception exception) {
+        callbackContext.error(exception.getMessage());
+        return;
+      }
+    }
+
     if (options.optBoolean("forceIntent", false) || TextUtils.isEmpty(pduUri) || Build.VERSION.SDK_INT < 21) {
       handleSendMmsIntent(options, callbackContext);
       return;
@@ -1603,7 +1625,7 @@ public class Sms extends CordovaPlugin {
         configOverrides,
         buildStatusPendingIntent(BROADCAST_ACTION_MMS_SENT, requestId, "", 0, 0, 1, subscriptionId)
       );
-      callbackContext.success(buildSendResult("mms", 1, 0, requestId, subscriptionId));
+      callbackContext.success(buildSendResult("mms", recipients.size(), attachmentCount, requestId, subscriptionId));
     } catch (Exception exception) {
       callbackContext.error(exception.getMessage());
     }
@@ -1660,6 +1682,164 @@ public class Sms extends CordovaPlugin {
     } catch (Exception exception) {
       callbackContext.error(exception.getMessage());
     }
+  }
+
+  private Uri buildOutgoingMmsPduUri(JSONObject options) throws Exception {
+    byte[] pduBytes;
+    File targetFile;
+
+    pduBytes = buildOutgoingMmsPduBytes(options);
+    if (pduBytes == null || pduBytes.length == 0) {
+      throw new IllegalArgumentException("Unable to compose MMS payload.");
+    }
+
+    targetFile = createCacheFile("outgoing_pdu", UUID.randomUUID().toString() + ".pdu");
+    writeBytesToFile(targetFile, pduBytes);
+    return buildContentUriForFile(targetFile);
+  }
+
+  private byte[] buildOutgoingMmsPduBytes(JSONObject options) throws Exception {
+    JSONArray attachments;
+    List<String> recipients;
+    String message;
+    String subject;
+    SendReq request;
+    PduComposer composer;
+
+    attachments = options.optJSONArray("attachments");
+    recipients = normalizeRecipients(options.optJSONArray("recipients"));
+    message = safeString(options.opt("message"));
+    subject = safeString(options.opt("subject"));
+
+    if (recipients.size() == 0) {
+      throw new IllegalArgumentException("Recipients are required.");
+    }
+    if (attachments == null || attachments.length() == 0) {
+      throw new IllegalArgumentException("At least one attachment is required.");
+    }
+
+    request = new SendReq();
+    request.setContentType("application/vnd.wap.multipart.mixed".getBytes("UTF-8"));
+    request.setDate(System.currentTimeMillis() / 1000L);
+    request.setBody(buildOutgoingMmsBody(attachments, message));
+    if (!TextUtils.isEmpty(subject)) {
+      request.setSubject(new EncodedStringValue(subject.getBytes("UTF-8")));
+    }
+
+    for (int index = 0; index < recipients.size(); index++) {
+      if (TextUtils.isEmpty(recipients.get(index))) {
+        continue;
+      }
+      request.addTo(new EncodedStringValue(recipients.get(index).getBytes("UTF-8")));
+    }
+
+    composer = new PduComposer(cordova.getActivity(), request);
+    return composer.make();
+  }
+
+  private PduBody buildOutgoingMmsBody(JSONArray attachments, String message) throws Exception {
+    PduBody body;
+    int index;
+    PduPart part;
+
+    body = new PduBody();
+    if (!TextUtils.isEmpty(message)) {
+      body.addPart(buildOutgoingMmsTextPart(message));
+    }
+
+    for (index = 0; index < attachments.length(); index++) {
+      part = buildOutgoingMmsAttachmentPart(attachments.optJSONObject(index), index);
+      if (part != null) {
+        body.addPart(part);
+      }
+    }
+
+    if (body.getPartsNum() == 0) {
+      throw new IllegalArgumentException("Unable to compose MMS content.");
+    }
+
+    return body;
+  }
+
+  private PduPart buildOutgoingMmsTextPart(String message) throws Exception {
+    PduPart part;
+    byte[] partName;
+
+    part = new PduPart();
+    partName = "text_0.txt".getBytes("UTF-8");
+    part.setCharset(CharacterSets.UTF_8);
+    part.setContentType("text/plain".getBytes("UTF-8"));
+    part.setName(partName);
+    part.setFilename(partName);
+    part.setContentLocation(partName);
+    part.setContentId("text0".getBytes("UTF-8"));
+    part.setContentDisposition("inline".getBytes("UTF-8"));
+    part.setData(message.getBytes("UTF-8"));
+    return part;
+  }
+
+  private PduPart buildOutgoingMmsAttachmentPart(JSONObject attachment, int index) throws Exception {
+    Uri attachmentUri;
+    String mimeType;
+    String fileName;
+    byte[] partName;
+    PduPart part;
+
+    if (attachment == null) {
+      return null;
+    }
+
+    attachmentUri = resolveAttachmentIntentUri(attachment);
+    if (attachmentUri == null) {
+      return null;
+    }
+
+    mimeType = safeString(resolveAttachmentMimeTypeValue(attachment, attachmentUri));
+    if (TextUtils.isEmpty(mimeType)) {
+      mimeType = "application/octet-stream";
+    }
+
+    fileName = buildOutgoingMmsAttachmentName(attachment, index, mimeType, attachmentUri);
+    partName = fileName.getBytes("UTF-8");
+
+    part = new PduPart();
+    part.setContentType(mimeType.getBytes("UTF-8"));
+    part.setName(partName);
+    part.setFilename(partName);
+    part.setContentLocation(partName);
+    part.setContentId(("attachment" + index).getBytes("UTF-8"));
+    part.setContentDisposition("attachment".getBytes("UTF-8"));
+    part.setDataUri(attachmentUri);
+    if (mimeType.startsWith("text/")) {
+      part.setCharset(CharacterSets.UTF_8);
+    }
+    return part;
+  }
+
+  private String buildOutgoingMmsAttachmentName(JSONObject attachment, int index, String mimeType, Uri attachmentUri) {
+    String fileName;
+    String extension;
+    String uriName;
+
+    fileName = sanitizeFilename(safeString(attachment == null ? "" : attachment.opt("name")));
+    if (!TextUtils.isEmpty(fileName)) {
+      return fileName;
+    }
+
+    uriName = attachmentUri == null ? "" : sanitizeFilename(safeString(attachmentUri.getLastPathSegment()));
+    if (!TextUtils.isEmpty(uriName)) {
+      return uriName;
+    }
+
+    extension = getExtensionForMimeType(mimeType);
+    if (TextUtils.isEmpty(extension)) {
+      extension = ".bin";
+    }
+    return "attachment_" + index + extension;
+  }
+
+  private int getJsonArrayLength(JSONArray array) {
+    return array == null ? 0 : array.length();
   }
 
   private void handleMarkRead(JSONObject options, CallbackContext callbackContext) {
@@ -4473,7 +4653,9 @@ public class Sms extends CordovaPlugin {
     BitmapFactory.Options decodeOptions;
     Bitmap bitmap;
     File targetFile;
+    ByteArrayOutputStream memoryStream;
     FileOutputStream outputStream;
+    byte[] thumbnailBytes;
     JSONObject result;
 
     attachment = options.optJSONObject("attachment");
@@ -4498,11 +4680,16 @@ public class Sms extends CordovaPlugin {
     }
 
     targetFile = createCacheFile("thumbnails", UUID.randomUUID().toString() + ".jpg");
+    thumbnailBytes = new byte[0];
+    memoryStream = new ByteArrayOutputStream();
     outputStream = new FileOutputStream(targetFile);
     try {
-      bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream);
+      bitmap.compress(Bitmap.CompressFormat.JPEG, quality, memoryStream);
+      thumbnailBytes = memoryStream.toByteArray();
+      outputStream.write(thumbnailBytes);
       outputStream.flush();
     } finally {
+      memoryStream.close();
       outputStream.close();
       bitmap.recycle();
     }
@@ -4510,6 +4697,7 @@ public class Sms extends CordovaPlugin {
     result = new JSONObject();
     result.put("path", targetFile.getAbsolutePath());
     result.put("fileUri", Uri.fromFile(targetFile).toString());
+    result.put("dataUri", "data:image/jpeg;base64," + Base64.encodeToString(thumbnailBytes, Base64.NO_WRAP));
     result.put("width", bounds.outWidth);
     result.put("height", bounds.outHeight);
     return result;
