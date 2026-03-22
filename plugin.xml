@@ -108,7 +108,7 @@
       <service android:name="com.cordova.sms.SmsWatchService" android:exported="false" android:foregroundServiceType="dataSync" />
     </config-file>
 
-    <resource-file src="src/android/res/xml/cordova_sms_file_paths.xml" target="app/src/main/res/xml/cordova_sms_file_paths.xml" />
+    <source-file src="src/android/res/xml/cordova_sms_file_paths.xml" target-dir="res/xml" />
     <source-file src="src/android/Sms.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsReceiver.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsDeliverReceiver.java" target-dir="src/com/cordova/sms" />
