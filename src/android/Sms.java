@@ -34,13 +34,13 @@ import android.util.Base64;
 
 import androidx.core.content.FileProvider;
 
-import com.google.android.mms.InvalidHeaderValueException;
-import com.google.android.mms.pdu.CharacterSets;
-import com.google.android.mms.pdu.EncodedStringValue;
-import com.google.android.mms.pdu.PduBody;
-import com.google.android.mms.pdu.PduComposer;
-import com.google.android.mms.pdu.PduPart;
-import com.google.android.mms.pdu.SendReq;
+import com.cordova.sms.mms.InvalidHeaderValueException;
+import com.cordova.sms.mms.pdu.CharacterSets;
+import com.cordova.sms.mms.pdu.EncodedStringValue;
+import com.cordova.sms.mms.pdu.PduBody;
+import com.cordova.sms.mms.pdu.PduComposer;
+import com.cordova.sms.mms.pdu.PduPart;
+import com.cordova.sms.mms.pdu.SendReq;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;

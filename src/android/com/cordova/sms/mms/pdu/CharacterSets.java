@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package com.google.android.mms.pdu;
+package com.cordova.sms.mms.pdu;
 
 
 import java.io.UnsupportedEncodingException;

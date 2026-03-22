@@ -109,19 +109,19 @@
     </config-file>
 
     <source-file src="src/android/res/xml/cordova_sms_file_paths.xml" target-dir="res/xml" />
-    <source-file src="src/android/com/google/android/mms/MmsException.java" target-dir="src/com/google/android/mms" />
-    <source-file src="src/android/com/google/android/mms/InvalidHeaderValueException.java" target-dir="src/com/google/android/mms" />
-    <source-file src="src/android/com/google/android/mms/pdu/CharacterSets.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/EncodedStringValue.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/GenericPdu.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/MultimediaMessagePdu.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/PduBody.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/PduComposer.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/PduContentTypes.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/PduHeaders.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/PduPart.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/RetrieveConf.java" target-dir="src/com/google/android/mms/pdu" />
-    <source-file src="src/android/com/google/android/mms/pdu/SendReq.java" target-dir="src/com/google/android/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/MmsException.java" target-dir="src/com/cordova/sms/mms" />
+    <source-file src="src/android/com/cordova/sms/mms/InvalidHeaderValueException.java" target-dir="src/com/cordova/sms/mms" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/CharacterSets.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/EncodedStringValue.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/GenericPdu.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/MultimediaMessagePdu.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/PduBody.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/PduComposer.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/PduContentTypes.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/PduHeaders.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/PduPart.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/RetrieveConf.java" target-dir="src/com/cordova/sms/mms/pdu" />
+    <source-file src="src/android/com/cordova/sms/mms/pdu/SendReq.java" target-dir="src/com/cordova/sms/mms/pdu" />
     <source-file src="src/android/Sms.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsReceiver.java" target-dir="src/com/cordova/sms" />
     <source-file src="src/android/SmsDeliverReceiver.java" target-dir="src/com/cordova/sms" />

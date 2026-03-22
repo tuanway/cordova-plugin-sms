@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
-package com.google.android.mms.pdu;
+package com.cordova.sms.mms.pdu;
 
 import android.util.Log;
 
-import com.google.android.mms.InvalidHeaderValueException;
+import com.cordova.sms.mms.InvalidHeaderValueException;
 
 public class SendReq extends MultimediaMessagePdu {
     private static final String TAG = "SendReq";

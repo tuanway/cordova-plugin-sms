@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-package com.google.android.mms.pdu;
+package com.cordova.sms.mms.pdu;
 
 
-import com.google.android.mms.InvalidHeaderValueException;
+import com.cordova.sms.mms.InvalidHeaderValueException;
 
 public class GenericPdu {
     /**

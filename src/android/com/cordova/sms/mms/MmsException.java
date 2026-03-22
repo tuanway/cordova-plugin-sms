@@ -15,28 +15,24 @@
  * limitations under the License.
  */
 
-package com.google.android.mms;
+package com.cordova.sms.mms;
 
+public class MmsException extends Exception {
+    private static final long serialVersionUID = -7323249827281485390L;
 
-/**
- * Thrown when an invalid header value was set.
- */
-public class InvalidHeaderValueException extends MmsException {
-    private static final long serialVersionUID = -2053384496042052262L;
-
-    /**
-     * Constructs an InvalidHeaderValueException with no detailed message.
-     */
-    public InvalidHeaderValueException() {
+    public MmsException() {
         super();
     }
 
-    /**
-     * Constructs an InvalidHeaderValueException with the specified detailed message.
-     *
-     * @param message the detailed message.
-     */
-    public InvalidHeaderValueException(String message) {
+    public MmsException(String message) {
         super(message);
+    }
+
+    public MmsException(Throwable cause) {
+        super(cause);
+    }
+
+    public MmsException(String message, Throwable cause) {
+        super(message, cause);
     }
 }
