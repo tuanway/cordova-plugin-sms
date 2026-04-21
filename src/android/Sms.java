@@ -3680,7 +3680,7 @@ public class Sms extends CordovaPlugin {
 
     startedAt = System.currentTimeMillis();
     summaries = new ArrayList<MessageSummary>();
-    cursor = querySmsCursor(threadId, options, new String[] { "_id", "thread_id", "date", "date_sent" });
+    cursor = querySmsCursor(threadId, options, new String[] { "_id", "thread_id", "address", "body", "date", "date_sent", "type", "read", "status" });
     if (cursor == null) {
       return summaries;
     }
@@ -3694,7 +3694,7 @@ public class Sms extends CordovaPlugin {
         providerId = cursor.getLong(cursor.getColumnIndex("_id"));
         date = cursor.getLong(cursor.getColumnIndex("date"));
         dateSent = cursor.getLong(cursor.getColumnIndex("date_sent"));
-        summaries.add(new MessageSummary("sms", providerId, date > 0 ? date : dateSent));
+        summaries.add(new MessageSummary("sms", providerId, date > 0 ? date : dateSent, buildSmsRow(cursor, options, false)));
       }
     } finally {
       cursor.close();
@@ -3747,6 +3747,11 @@ public class Sms extends CordovaPlugin {
 
     startedAt = System.currentTimeMillis();
     addDebugLog("list_messages_hydrate_start", buildMessageOperationLogDetails(options, summary.kind, summary.providerId));
+
+    if (summary.row != null) {
+      addDebugLog("list_messages_hydrate_cached_row", putDebugValue(buildMessageOperationLogDetails(options, summary.kind, summary.providerId), "elapsedMs", System.currentTimeMillis() - startedAt));
+      return summary.row;
+    }
 
     row = querySingleMessage(summary.kind, summary.providerId, options);
     addDebugLog("list_messages_hydrate_success", putDebugValue(buildMessageOperationLogDetails(options, summary.kind, summary.providerId), "elapsedMs", System.currentTimeMillis() - startedAt)
@@ -4171,6 +4176,10 @@ public class Sms extends CordovaPlugin {
   }
 
   private JSONObject buildSmsRow(Cursor cursor, JSONObject options) throws JSONException {
+    return buildSmsRow(cursor, options, true);
+  }
+
+  private JSONObject buildSmsRow(Cursor cursor, JSONObject options, boolean debug) throws JSONException {
     JSONObject row;
     JSONArray addresses;
     String address;
@@ -4186,22 +4195,22 @@ public class Sms extends CordovaPlugin {
     startedAt = System.currentTimeMillis();
     try {
       smsId = cursor.getLong(cursor.getColumnIndex("_id"));
-      addDebugLog("list_messages_sms_row_start", buildMessageOperationLogDetails(options, "sms", smsId));
+      if (debug) addDebugLog("list_messages_sms_row_start", buildMessageOperationLogDetails(options, "sms", smsId));
 
       smsThreadId = cursor.getLong(cursor.getColumnIndex("thread_id"));
       type = cursor.getInt(cursor.getColumnIndex("type"));
       date = cursor.getLong(cursor.getColumnIndex("date"));
       dateSent = cursor.getLong(cursor.getColumnIndex("date_sent"));
       outgoing = isOutgoingSmsType(type);
-      addDebugLog("list_messages_sms_row_core_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "threadKey", String.valueOf(smsThreadId)));
+      if (debug) addDebugLog("list_messages_sms_row_core_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "threadKey", String.valueOf(smsThreadId)));
 
-      addDebugLog("list_messages_sms_row_address_before", buildMessageOperationLogDetails(options, "sms", smsId));
+      if (debug) addDebugLog("list_messages_sms_row_address_before", buildMessageOperationLogDetails(options, "sms", smsId));
       address = normalizeAddress(cursor.getString(cursor.getColumnIndex("address")));
       addresses = new JSONArray();
       if (!TextUtils.isEmpty(address)) {
         addresses.put(address);
       }
-      addDebugLog("list_messages_sms_row_address_after", putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "hasAddress", !TextUtils.isEmpty(address)));
+      if (debug) addDebugLog("list_messages_sms_row_address_after", putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "hasAddress", !TextUtils.isEmpty(address)));
 
       row = new JSONObject();
       row.put("id", "sms:" + smsId);
@@ -4210,9 +4219,9 @@ public class Sms extends CordovaPlugin {
       row.put("threadId", smsThreadId);
       row.put("kind", "sms");
       row.put("mms", false);
-      addDebugLog("list_messages_sms_row_body_before", buildMessageOperationLogDetails(options, "sms", smsId));
+      if (debug) addDebugLog("list_messages_sms_row_body_before", buildMessageOperationLogDetails(options, "sms", smsId));
       row.put("body", safeString(cursor.getString(cursor.getColumnIndex("body"))));
-      addDebugLog("list_messages_sms_row_body_after", putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "bodyLength", row.optString("body", "").length()));
+      if (debug) addDebugLog("list_messages_sms_row_body_after", putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "bodyLength", row.optString("body", "").length()));
       row.put("address", address);
       row.put("addresses", addresses);
       row.put("date", date);
@@ -4222,11 +4231,13 @@ public class Sms extends CordovaPlugin {
       row.put("box", type);
       row.put("read", cursor.getInt(cursor.getColumnIndex("read")) == 1);
       row.put("status", cursor.getInt(cursor.getColumnIndex("status")));
-      addDebugLog("list_messages_sms_row_success", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "threadKey", String.valueOf(smsThreadId)), "elapsedMs", System.currentTimeMillis() - startedAt));
+      if (debug) addDebugLog("list_messages_sms_row_success", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "threadKey", String.valueOf(smsThreadId)), "elapsedMs", System.currentTimeMillis() - startedAt));
       return row;
     } catch (Exception exception) {
-      addDebugLog("list_messages_sms_row_error", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "elapsedMs", System.currentTimeMillis() - startedAt), "error", safeThrowableMessage(exception))
-        .put("errorType", exception.getClass().getSimpleName()));
+      if (debug) {
+        addDebugLog("list_messages_sms_row_error", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "sms", smsId), "elapsedMs", System.currentTimeMillis() - startedAt), "error", safeThrowableMessage(exception))
+          .put("errorType", exception.getClass().getSimpleName()));
+      }
       if (exception instanceof JSONException) {
         throw (JSONException) exception;
       }
@@ -6170,11 +6181,17 @@ public class Sms extends CordovaPlugin {
     private final String kind;
     private final long providerId;
     private final long sortDate;
+    private final JSONObject row;
 
     private MessageSummary(String kind, long providerId, long sortDate) {
+      this(kind, providerId, sortDate, null);
+    }
+
+    private MessageSummary(String kind, long providerId, long sortDate, JSONObject row) {
       this.kind = kind;
       this.providerId = providerId;
       this.sortDate = sortDate;
+      this.row = row;
     }
   }
 }
