@@ -3712,7 +3712,7 @@ public class Sms extends CordovaPlugin {
 
     startedAt = System.currentTimeMillis();
     summaries = new ArrayList<MessageSummary>();
-    cursor = queryMmsCursor(threadId, options, new String[] { "_id", "thread_id", "date", "date_sent" });
+    cursor = queryMmsCursor(threadId, options, new String[] { "_id", "thread_id", "date", "date_sent", "msg_box", "read", "sub" });
     if (cursor == null) {
       return summaries;
     }
@@ -3726,7 +3726,17 @@ public class Sms extends CordovaPlugin {
         providerId = cursor.getLong(cursor.getColumnIndex("_id"));
         date = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date")));
         dateSent = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent")));
-        summaries.add(new MessageSummary("mms", providerId, date > 0 ? date : dateSent));
+        summaries.add(new MessageSummary(
+          "mms",
+          providerId,
+          date > 0 ? date : dateSent,
+          cursor.getLong(cursor.getColumnIndex("thread_id")),
+          date,
+          dateSent,
+          cursor.getInt(cursor.getColumnIndex("msg_box")),
+          cursor.getInt(cursor.getColumnIndex("read")) == 1,
+          safeString(cursor.getString(cursor.getColumnIndex("sub")))
+        ));
       }
     } finally {
       cursor.close();
@@ -3751,6 +3761,14 @@ public class Sms extends CordovaPlugin {
     if (summary.row != null) {
       addDebugLog("list_messages_hydrate_cached_row", putDebugValue(buildMessageOperationLogDetails(options, summary.kind, summary.providerId), "elapsedMs", System.currentTimeMillis() - startedAt));
       return summary.row;
+    }
+
+    if ("mms".equals(summary.kind) && summary.hasMmsFields) {
+      row = buildMmsRow(summary, options);
+      addDebugLog("list_messages_hydrate_success", putDebugValue(buildMessageOperationLogDetails(options, summary.kind, summary.providerId), "elapsedMs", System.currentTimeMillis() - startedAt)
+        .put("found", row != null)
+        .put("cachedRowFields", true));
+      return row;
     }
 
     row = querySingleMessage(summary.kind, summary.providerId, options);
@@ -4253,26 +4271,40 @@ public class Sms extends CordovaPlugin {
   }
 
   private JSONObject buildMmsRow(Cursor cursor, JSONObject options) throws JSONException {
+    return buildMmsRow(
+      cursor.getLong(cursor.getColumnIndex("_id")),
+      cursor.getLong(cursor.getColumnIndex("thread_id")),
+      normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date"))),
+      normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent"))),
+      cursor.getInt(cursor.getColumnIndex("msg_box")),
+      cursor.getInt(cursor.getColumnIndex("read")) == 1,
+      safeString(cursor.getString(cursor.getColumnIndex("sub"))),
+      options
+    );
+  }
+
+  private JSONObject buildMmsRow(MessageSummary summary, JSONObject options) throws JSONException {
+    return buildMmsRow(
+      summary.providerId,
+      summary.mmsThreadId,
+      summary.mmsDate,
+      summary.mmsDateSent,
+      summary.mmsMsgBox,
+      summary.mmsRead,
+      summary.mmsSubject,
+      options
+    );
+  }
+
+  private JSONObject buildMmsRow(long messageId, long messageThreadId, long date, long dateSent, int msgBox, boolean read, String subject, JSONObject options) throws JSONException {
     JSONObject row;
     JSONObject textAndAttachments;
     JSONArray addresses;
-    long messageId;
-    long messageThreadId;
-    long date;
-    long dateSent;
-    int msgBox;
     long startedAt;
 
-    messageId = 0L;
     startedAt = System.currentTimeMillis();
     try {
-      messageId = cursor.getLong(cursor.getColumnIndex("_id"));
       addDebugLog("list_messages_mms_row_start", buildMessageOperationLogDetails(options, "mms", messageId));
-
-      messageThreadId = cursor.getLong(cursor.getColumnIndex("thread_id"));
-      date = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date")));
-      dateSent = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent")));
-      msgBox = cursor.getInt(cursor.getColumnIndex("msg_box"));
       addDebugLog("list_messages_mms_row_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)));
 
       addDebugLog("list_messages_mms_row_parts_before", buildMessageOperationLogDetails(options, "mms", messageId));
@@ -4296,7 +4328,7 @@ public class Sms extends CordovaPlugin {
       row.put("kind", "mms");
       row.put("mms", true);
       row.put("body", safeString(textAndAttachments.opt("body")));
-      row.put("subject", safeString(cursor.getString(cursor.getColumnIndex("sub"))));
+      row.put("subject", safeString(subject));
       row.put("addresses", addresses);
       row.put("address", addresses.length() > 0 ? addresses.optString(0) : "");
       row.put("attachments", textAndAttachments.optJSONArray("attachments"));
@@ -4306,7 +4338,7 @@ public class Sms extends CordovaPlugin {
       row.put("sortDate", date > 0 ? date : dateSent);
       row.put("direction", msgBox == 1 ? "incoming" : "outgoing");
       row.put("box", msgBox);
-      row.put("read", cursor.getInt(cursor.getColumnIndex("read")) == 1);
+      row.put("read", read);
       addDebugLog("list_messages_mms_row_success", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)), "elapsedMs", System.currentTimeMillis() - startedAt)
         .put("attachmentCount", row.optInt("attachmentCount", 0)));
       return row;
@@ -6182,6 +6214,13 @@ public class Sms extends CordovaPlugin {
     private final long providerId;
     private final long sortDate;
     private final JSONObject row;
+    private final boolean hasMmsFields;
+    private final long mmsThreadId;
+    private final long mmsDate;
+    private final long mmsDateSent;
+    private final int mmsMsgBox;
+    private final boolean mmsRead;
+    private final String mmsSubject;
 
     private MessageSummary(String kind, long providerId, long sortDate) {
       this(kind, providerId, sortDate, null);
@@ -6192,6 +6231,27 @@ public class Sms extends CordovaPlugin {
       this.providerId = providerId;
       this.sortDate = sortDate;
       this.row = row;
+      this.hasMmsFields = false;
+      this.mmsThreadId = 0L;
+      this.mmsDate = 0L;
+      this.mmsDateSent = 0L;
+      this.mmsMsgBox = 0;
+      this.mmsRead = false;
+      this.mmsSubject = "";
+    }
+
+    private MessageSummary(String kind, long providerId, long sortDate, long mmsThreadId, long mmsDate, long mmsDateSent, int mmsMsgBox, boolean mmsRead, String mmsSubject) {
+      this.kind = kind;
+      this.providerId = providerId;
+      this.sortDate = sortDate;
+      this.row = null;
+      this.hasMmsFields = true;
+      this.mmsThreadId = mmsThreadId;
+      this.mmsDate = mmsDate;
+      this.mmsDateSent = mmsDateSent;
+      this.mmsMsgBox = mmsMsgBox;
+      this.mmsRead = mmsRead;
+      this.mmsSubject = mmsSubject;
     }
   }
 }
