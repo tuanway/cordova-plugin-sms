@@ -159,7 +159,10 @@ public class Sms extends CordovaPlugin {
   private static final Object LAUNCH_CONTEXT_LOCK = new Object();
   private static final Object DEBUG_LOG_LOCK = new Object();
   private static final int MAX_DEBUG_LOG_ENTRIES = 400;
+  private static final long DEBUG_LOG_PERSIST_INTERVAL_MS = 750L;
   private static final ArrayList<JSONObject> PENDING_EVENTS = new ArrayList<JSONObject>();
+  private static JSONArray debugLogCache;
+  private static long lastDebugLogPersistAt;
   private static Sms activeInstance;
   private static JSONObject pendingLaunchContext;
   private static boolean appInForeground;
@@ -970,23 +973,29 @@ public class Sms extends CordovaPlugin {
   public static void addDebugLog(Context context, String eventName, JSONObject details) {
     JSONArray entries;
     JSONObject entry;
+    long now;
 
     if (context == null) {
       return;
     }
 
+    now = System.currentTimeMillis();
     entry = new JSONObject();
     try {
-      entry.put("timestamp", System.currentTimeMillis());
+      entry.put("timestamp", now);
       entry.put("event", eventName == null ? "" : eventName);
       entry.put("details", details == null ? new JSONObject() : copyJson(details));
     } catch (JSONException ignored) {
     }
 
     synchronized (DEBUG_LOG_LOCK) {
-      entries = readDebugLogs(context);
+      entries = getDebugLogCache(context);
       entries.put(entry);
-      writeDebugLogs(context, trimDebugLogs(entries));
+      debugLogCache = trimDebugLogs(entries);
+      if (shouldPersistDebugLogs(eventName, now)) {
+        writeDebugLogs(context, debugLogCache);
+        lastDebugLogPersistAt = now;
+      }
     }
   }
 
@@ -1000,14 +1009,39 @@ public class Sms extends CordovaPlugin {
 
   private JSONArray getDebugLogsJson() {
     synchronized (DEBUG_LOG_LOCK) {
-      return copyJsonArray(readDebugLogs(getDebugLogContext()));
+      return copyJsonArray(getDebugLogCache(getDebugLogContext()));
     }
   }
 
   private void clearDebugLogsJson() {
     synchronized (DEBUG_LOG_LOCK) {
-      writeDebugLogs(getDebugLogContext(), new JSONArray());
+      debugLogCache = new JSONArray();
+      lastDebugLogPersistAt = System.currentTimeMillis();
+      writeDebugLogs(getDebugLogContext(), debugLogCache);
     }
+  }
+
+  private static JSONArray getDebugLogCache(Context context) {
+    if (debugLogCache == null) {
+      debugLogCache = readDebugLogs(context);
+    }
+    return debugLogCache;
+  }
+
+  private static boolean shouldPersistDebugLogs(String eventName, long now) {
+    String name;
+
+    name = eventName == null ? "" : eventName;
+    if (now - lastDebugLogPersistAt >= DEBUG_LOG_PERSIST_INTERVAL_MS) {
+      return true;
+    }
+
+    return "list_messages_success".equals(name)
+      || "list_messages_error".equals(name)
+      || "list_messages_mixed_success".equals(name)
+      || "list_messages_mixed_error".equals(name)
+      || "list_messages_mms_parts_batch_success".equals(name)
+      || "list_messages_mms_parts_batch_null_cursor".equals(name);
   }
 
   private static JSONArray readDebugLogs(Context context) {
@@ -4326,19 +4360,31 @@ public class Sms extends CordovaPlugin {
     JSONObject textAndAttachments;
     JSONArray addresses;
     long startedAt;
+    boolean skipMmsAddresses;
+    boolean verboseRowLogs;
 
     startedAt = System.currentTimeMillis();
+    skipMmsAddresses = options != null && options.optBoolean("skipMmsAddresses", false);
+    verboseRowLogs = preloadedParts == null || !skipMmsAddresses;
     try {
       addDebugLog("list_messages_mms_row_start", buildMessageOperationLogDetails(options, "mms", messageId));
-      addDebugLog("list_messages_mms_row_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)));
+      if (verboseRowLogs) {
+        addDebugLog("list_messages_mms_row_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)));
+      }
 
-      addDebugLog("list_messages_mms_row_parts_before", buildMessageOperationLogDetails(options, "mms", messageId));
+      if (verboseRowLogs) {
+        addDebugLog("list_messages_mms_row_parts_before", buildMessageOperationLogDetails(options, "mms", messageId));
+      }
       textAndAttachments = preloadedParts == null ? loadMmsParts(messageId, options) : preloadedParts;
-      addDebugLog("list_messages_mms_row_parts_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length()));
+      if (verboseRowLogs) {
+        addDebugLog("list_messages_mms_row_parts_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length()));
+      }
 
-      if (options != null && options.optBoolean("skipMmsAddresses", false)) {
+      if (skipMmsAddresses) {
         addresses = new JSONArray();
-        addDebugLog("list_messages_mms_row_addresses_skipped", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "reason", "skipMmsAddresses"));
+        if (verboseRowLogs) {
+          addDebugLog("list_messages_mms_row_addresses_skipped", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "reason", "skipMmsAddresses"));
+        }
       } else {
         addDebugLog("list_messages_mms_row_addresses_before", buildMessageOperationLogDetails(options, "mms", messageId));
         addresses = loadMmsAddresses(messageId, options);
@@ -4365,7 +4411,8 @@ public class Sms extends CordovaPlugin {
       row.put("box", msgBox);
       row.put("read", read);
       addDebugLog("list_messages_mms_row_success", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)), "elapsedMs", System.currentTimeMillis() - startedAt)
-        .put("attachmentCount", row.optInt("attachmentCount", 0)));
+        .put("attachmentCount", row.optInt("attachmentCount", 0))
+        .put("preloadedParts", preloadedParts != null));
       return row;
     } catch (Exception exception) {
       addDebugLog("list_messages_mms_row_error", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "elapsedMs", System.currentTimeMillis() - startedAt), "error", safeThrowableMessage(exception))
