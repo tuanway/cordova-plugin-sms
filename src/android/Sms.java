@@ -4267,9 +4267,14 @@ public class Sms extends CordovaPlugin {
       textAndAttachments = loadMmsParts(messageId, options);
       addDebugLog("list_messages_mms_row_parts_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length()));
 
-      addDebugLog("list_messages_mms_row_addresses_before", buildMessageOperationLogDetails(options, "mms", messageId));
-      addresses = loadMmsAddresses(messageId, options);
-      addDebugLog("list_messages_mms_row_addresses_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "addressCount", addresses.length()));
+      if (options != null && options.optBoolean("skipMmsAddresses", false)) {
+        addresses = new JSONArray();
+        addDebugLog("list_messages_mms_row_addresses_skipped", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "reason", "skipMmsAddresses"));
+      } else {
+        addDebugLog("list_messages_mms_row_addresses_before", buildMessageOperationLogDetails(options, "mms", messageId));
+        addresses = loadMmsAddresses(messageId, options);
+        addDebugLog("list_messages_mms_row_addresses_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "addressCount", addresses.length()));
+      }
 
       row = new JSONObject();
       row.put("id", "mms:" + messageId);
