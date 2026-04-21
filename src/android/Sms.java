@@ -4221,38 +4221,61 @@ public class Sms extends CordovaPlugin {
     long date;
     long dateSent;
     int msgBox;
+    long startedAt;
 
-    messageId = cursor.getLong(cursor.getColumnIndex("_id"));
-    addDebugLog("list_messages_mms_row_start", buildMessageOperationLogDetails(options, "mms", messageId));
-    messageThreadId = cursor.getLong(cursor.getColumnIndex("thread_id"));
-    date = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date")));
-    dateSent = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent")));
-    msgBox = cursor.getInt(cursor.getColumnIndex("msg_box"));
-    textAndAttachments = loadMmsParts(messageId, options);
-    addresses = loadMmsAddresses(messageId, options);
+    messageId = 0L;
+    startedAt = System.currentTimeMillis();
+    try {
+      messageId = cursor.getLong(cursor.getColumnIndex("_id"));
+      addDebugLog("list_messages_mms_row_start", buildMessageOperationLogDetails(options, "mms", messageId));
 
-    row = new JSONObject();
-    row.put("id", "mms:" + messageId);
-    row.put("providerId", messageId);
-    row.put("threadKey", String.valueOf(messageThreadId));
-    row.put("threadId", messageThreadId);
-    row.put("kind", "mms");
-    row.put("mms", true);
-    row.put("body", safeString(textAndAttachments.opt("body")));
-    row.put("subject", safeString(cursor.getString(cursor.getColumnIndex("sub"))));
-    row.put("addresses", addresses);
-    row.put("address", addresses.length() > 0 ? addresses.optString(0) : "");
-    row.put("attachments", textAndAttachments.optJSONArray("attachments"));
-    row.put("attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length());
-    row.put("date", date);
-    row.put("dateSent", dateSent);
-    row.put("sortDate", date > 0 ? date : dateSent);
-    row.put("direction", msgBox == 1 ? "incoming" : "outgoing");
-    row.put("box", msgBox);
-    row.put("read", cursor.getInt(cursor.getColumnIndex("read")) == 1);
-    addDebugLog("list_messages_mms_row_success", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId))
-      .put("attachmentCount", row.optInt("attachmentCount", 0)));
-    return row;
+      messageThreadId = cursor.getLong(cursor.getColumnIndex("thread_id"));
+      date = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date")));
+      dateSent = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent")));
+      msgBox = cursor.getInt(cursor.getColumnIndex("msg_box"));
+      addDebugLog("list_messages_mms_row_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)));
+
+      addDebugLog("list_messages_mms_row_parts_before", buildMessageOperationLogDetails(options, "mms", messageId));
+      textAndAttachments = loadMmsParts(messageId, options);
+      addDebugLog("list_messages_mms_row_parts_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length()));
+
+      addDebugLog("list_messages_mms_row_addresses_before", buildMessageOperationLogDetails(options, "mms", messageId));
+      addresses = loadMmsAddresses(messageId, options);
+      addDebugLog("list_messages_mms_row_addresses_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "addressCount", addresses.length()));
+
+      row = new JSONObject();
+      row.put("id", "mms:" + messageId);
+      row.put("providerId", messageId);
+      row.put("threadKey", String.valueOf(messageThreadId));
+      row.put("threadId", messageThreadId);
+      row.put("kind", "mms");
+      row.put("mms", true);
+      row.put("body", safeString(textAndAttachments.opt("body")));
+      row.put("subject", safeString(cursor.getString(cursor.getColumnIndex("sub"))));
+      row.put("addresses", addresses);
+      row.put("address", addresses.length() > 0 ? addresses.optString(0) : "");
+      row.put("attachments", textAndAttachments.optJSONArray("attachments"));
+      row.put("attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length());
+      row.put("date", date);
+      row.put("dateSent", dateSent);
+      row.put("sortDate", date > 0 ? date : dateSent);
+      row.put("direction", msgBox == 1 ? "incoming" : "outgoing");
+      row.put("box", msgBox);
+      row.put("read", cursor.getInt(cursor.getColumnIndex("read")) == 1);
+      addDebugLog("list_messages_mms_row_success", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)), "elapsedMs", System.currentTimeMillis() - startedAt)
+        .put("attachmentCount", row.optInt("attachmentCount", 0)));
+      return row;
+    } catch (Exception exception) {
+      addDebugLog("list_messages_mms_row_error", putDebugValue(putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "elapsedMs", System.currentTimeMillis() - startedAt), "error", safeThrowableMessage(exception))
+        .put("errorType", exception.getClass().getSimpleName()));
+      if (exception instanceof JSONException) {
+        throw (JSONException) exception;
+      }
+      if (exception instanceof RuntimeException) {
+        throw (RuntimeException) exception;
+      }
+      throw new JSONException(safeThrowableMessage(exception));
+    }
   }
 
   private JSONObject querySingleMessage(String source, long providerId) throws JSONException {
