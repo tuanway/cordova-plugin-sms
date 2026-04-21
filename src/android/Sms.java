@@ -1825,16 +1825,31 @@ public class Sms extends CordovaPlugin {
 
   private void handleListMessages(JSONObject options, CallbackContext callbackContext) {
     JSONArray messages;
+    long startedAt;
+    JSONObject logDetails;
 
     if (!hasPermissions(READ_PERMISSIONS)) {
       callbackContext.error("READ_SMS permission is required.");
       return;
     }
 
+    startedAt = System.currentTimeMillis();
+    logDetails = buildMessageQueryLogDetails(options);
+    addDebugLog("list_messages_start", logDetails);
+
     try {
       messages = queryMessages(options);
+      logDetails = copyJson(logDetails);
+      putDebugValue(logDetails, "elapsedMs", System.currentTimeMillis() - startedAt);
+      putDebugValue(logDetails, "resultCount", messages.length());
+      addDebugLog("list_messages_success", logDetails);
       callbackContext.success(messages);
     } catch (Exception exception) {
+      logDetails = copyJson(logDetails);
+      putDebugValue(logDetails, "elapsedMs", System.currentTimeMillis() - startedAt);
+      putDebugValue(logDetails, "error", safeThrowableMessage(exception));
+      putDebugValue(logDetails, "errorType", exception.getClass().getSimpleName());
+      addDebugLog("list_messages_error", logDetails);
       callbackContext.error(exception.getMessage());
     }
   }
@@ -3350,6 +3365,10 @@ public class Sms extends CordovaPlugin {
       return toJsonArray(queryProviderPagedMessageItems(options));
     }
 
+    if (canUseMixedProviderPaging(options)) {
+      return toJsonArray(queryPagedMixedMessageItems(options));
+    }
+
     return toJsonArray(applyPaging(queryMessageItems(options), options));
   }
 
@@ -3400,6 +3419,91 @@ public class Sms extends CordovaPlugin {
     return items;
   }
 
+  private boolean canUseMixedProviderPaging(JSONObject options) {
+    if (options == null) {
+      return false;
+    }
+
+    if (!TextUtils.isEmpty(safeString(options.opt("kind")))) {
+      return false;
+    }
+
+    if (!TextUtils.isEmpty(normalizeSearch(options.optString("search")))) {
+      return false;
+    }
+
+    if (options.optLong("dateFrom", 0L) > 0L || options.optLong("dateTo", 0L) > 0L) {
+      return false;
+    }
+
+    if (options.optBoolean("unreadOnly", false)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private List<JSONObject> queryPagedMixedMessageItems(JSONObject options) throws JSONException {
+    ArrayList<MessageSummary> summaries;
+    ArrayList<JSONObject> items;
+    List<MessageSummary> page;
+    long threadId;
+    int offset;
+    int limit;
+    int fromIndex;
+    int toIndex;
+    int index;
+    String order;
+    long startedAt;
+
+    startedAt = System.currentTimeMillis();
+    threadId = parseThreadId(options);
+    offset = Math.max(0, options.optInt("offset", 0));
+    limit = Math.max(0, options.optInt("limit", 0));
+    order = safeString(options.opt("order"));
+    if (TextUtils.isEmpty(order)) {
+      order = "asc";
+    }
+
+    addDebugLog("list_messages_mixed_summaries_start", buildMessageQueryLogDetails(options));
+    summaries = new ArrayList<MessageSummary>();
+    summaries.addAll(querySmsMessageSummaries(threadId, options));
+    summaries.addAll(queryMmsMessageSummaries(threadId, options));
+    sortMessageSummaries(summaries, order);
+
+    fromIndex = Math.min(offset, summaries.size());
+    if (limit == 0) {
+      toIndex = summaries.size();
+    } else {
+      toIndex = Math.min(fromIndex + limit, summaries.size());
+    }
+
+    page = new ArrayList<MessageSummary>(summaries.subList(fromIndex, toIndex));
+    items = new ArrayList<JSONObject>();
+    addDebugLog("list_messages_mixed_page_selected", putDebugValue(buildMessageQueryLogDetails(options), "elapsedMs", System.currentTimeMillis() - startedAt)
+      .put("totalSummaries", summaries.size())
+      .put("selectedCount", page.size())
+      .put("fromIndex", fromIndex)
+      .put("toIndex", toIndex));
+
+    for (index = 0; index < page.size(); index++) {
+      JSONObject row;
+      MessageSummary summary;
+
+      summary = page.get(index);
+      row = hydrateMessageSummary(summary, options);
+      if (row != null) {
+        items.add(row);
+      }
+    }
+
+    filterMessageItems(items, options);
+    sortMessages(items, order);
+    addDebugLog("list_messages_mixed_success", putDebugValue(buildMessageQueryLogDetails(options), "elapsedMs", System.currentTimeMillis() - startedAt)
+      .put("resultCount", items.size()));
+    return items;
+  }
+
   private boolean canUseProviderPagedKindQuery(JSONObject options) {
     String kind;
 
@@ -3432,6 +3536,230 @@ public class Sms extends CordovaPlugin {
     }
 
     return "date ASC";
+  }
+
+  private JSONObject buildMessageQueryLogDetails(JSONObject options) {
+    JSONObject details;
+
+    details = new JSONObject();
+    if (options == null) {
+      return details;
+    }
+
+    putDebugValue(details, "threadKey", safeString(options.opt("threadKey")));
+    putDebugValue(details, "threadId", options.optLong("threadId", 0L));
+    putDebugValue(details, "offset", Math.max(0, options.optInt("offset", 0)));
+    putDebugValue(details, "limit", Math.max(0, options.optInt("limit", 0)));
+    putDebugValue(details, "order", safeString(options.opt("order")));
+    putDebugValue(details, "kind", safeString(options.opt("kind")));
+    putDebugValue(details, "resolveContacts", options.optBoolean("resolveContacts", false));
+    return details;
+  }
+
+  private JSONObject putDebugValue(JSONObject details, String key, Object value) {
+    try {
+      details.put(key, value);
+    } catch (JSONException ignored) {
+    }
+    return details;
+  }
+
+  private Cursor querySmsCursor(long threadId, JSONObject options, String[] projection) {
+    ContentResolver resolver;
+    String selection;
+    String[] selectionArgs;
+    long startedAt;
+
+    resolver = cordova.getActivity().getContentResolver();
+    selection = null;
+    selectionArgs = null;
+    startedAt = System.currentTimeMillis();
+
+    if (threadId > 0) {
+      selection = "thread_id = ?";
+      selectionArgs = new String[] { String.valueOf(threadId) };
+    }
+
+    addDebugLog("list_messages_sms_cursor_start", putDebugValue(buildMessageQueryLogDetails(options), "projectionCount", projection == null ? 0 : projection.length));
+    try {
+      Cursor cursor;
+
+      cursor = resolver.query(
+        Telephony.Sms.CONTENT_URI,
+        projection,
+        selection,
+        selectionArgs,
+        getProviderMessageSortOrder(options == null ? new JSONObject() : options)
+      );
+      JSONObject details;
+
+      details = buildMessageQueryLogDetails(options);
+      putDebugValue(details, "elapsedMs", System.currentTimeMillis() - startedAt);
+      putDebugValue(details, "cursorCount", cursor == null ? -1 : cursor.getCount());
+      addDebugLog("list_messages_sms_cursor_success", details);
+      return cursor;
+    } catch (Exception exception) {
+      JSONObject details;
+
+      details = buildMessageQueryLogDetails(options);
+      putDebugValue(details, "elapsedMs", System.currentTimeMillis() - startedAt);
+      putDebugValue(details, "error", safeThrowableMessage(exception));
+      putDebugValue(details, "errorType", exception.getClass().getSimpleName());
+      addDebugLog("list_messages_sms_cursor_error", details);
+      if (exception instanceof RuntimeException) {
+        throw (RuntimeException) exception;
+      }
+      throw new RuntimeException(exception);
+    }
+  }
+
+  private Cursor queryMmsCursor(long threadId, JSONObject options, String[] projection) {
+    ContentResolver resolver;
+    String selection;
+    String[] selectionArgs;
+    long startedAt;
+
+    resolver = cordova.getActivity().getContentResolver();
+    selection = null;
+    selectionArgs = null;
+    startedAt = System.currentTimeMillis();
+
+    if (threadId > 0) {
+      selection = "thread_id = ?";
+      selectionArgs = new String[] { String.valueOf(threadId) };
+    }
+
+    addDebugLog("list_messages_mms_cursor_start", putDebugValue(buildMessageQueryLogDetails(options), "projectionCount", projection == null ? 0 : projection.length));
+    try {
+      Cursor cursor;
+
+      cursor = resolver.query(
+        Uri.parse("content://mms"),
+        projection,
+        selection,
+        selectionArgs,
+        getProviderMessageSortOrder(options == null ? new JSONObject() : options)
+      );
+      JSONObject details;
+
+      details = buildMessageQueryLogDetails(options);
+      putDebugValue(details, "elapsedMs", System.currentTimeMillis() - startedAt);
+      putDebugValue(details, "cursorCount", cursor == null ? -1 : cursor.getCount());
+      addDebugLog("list_messages_mms_cursor_success", details);
+      return cursor;
+    } catch (Exception exception) {
+      JSONObject details;
+
+      details = buildMessageQueryLogDetails(options);
+      putDebugValue(details, "elapsedMs", System.currentTimeMillis() - startedAt);
+      putDebugValue(details, "error", safeThrowableMessage(exception));
+      putDebugValue(details, "errorType", exception.getClass().getSimpleName());
+      addDebugLog("list_messages_mms_cursor_error", details);
+      if (exception instanceof RuntimeException) {
+        throw (RuntimeException) exception;
+      }
+      throw new RuntimeException(exception);
+    }
+  }
+
+  private ArrayList<MessageSummary> querySmsMessageSummaries(long threadId, JSONObject options) throws JSONException {
+    Cursor cursor;
+    ArrayList<MessageSummary> summaries;
+    long startedAt;
+
+    startedAt = System.currentTimeMillis();
+    summaries = new ArrayList<MessageSummary>();
+    cursor = querySmsCursor(threadId, options, new String[] { "_id", "thread_id", "date", "date_sent" });
+    if (cursor == null) {
+      return summaries;
+    }
+
+    try {
+      while (cursor.moveToNext()) {
+        long providerId;
+        long date;
+        long dateSent;
+
+        providerId = cursor.getLong(cursor.getColumnIndex("_id"));
+        date = cursor.getLong(cursor.getColumnIndex("date"));
+        dateSent = cursor.getLong(cursor.getColumnIndex("date_sent"));
+        summaries.add(new MessageSummary("sms", providerId, date > 0 ? date : dateSent));
+      }
+    } finally {
+      cursor.close();
+    }
+
+    addDebugLog("list_messages_sms_summaries_success", putDebugValue(buildMessageQueryLogDetails(options), "elapsedMs", System.currentTimeMillis() - startedAt)
+      .put("summaryCount", summaries.size()));
+    return summaries;
+  }
+
+  private ArrayList<MessageSummary> queryMmsMessageSummaries(long threadId, JSONObject options) throws JSONException {
+    Cursor cursor;
+    ArrayList<MessageSummary> summaries;
+    long startedAt;
+
+    startedAt = System.currentTimeMillis();
+    summaries = new ArrayList<MessageSummary>();
+    cursor = queryMmsCursor(threadId, options, new String[] { "_id", "thread_id", "date", "date_sent" });
+    if (cursor == null) {
+      return summaries;
+    }
+
+    try {
+      while (cursor.moveToNext()) {
+        long providerId;
+        long date;
+        long dateSent;
+
+        providerId = cursor.getLong(cursor.getColumnIndex("_id"));
+        date = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date")));
+        dateSent = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent")));
+        summaries.add(new MessageSummary("mms", providerId, date > 0 ? date : dateSent));
+      }
+    } finally {
+      cursor.close();
+    }
+
+    addDebugLog("list_messages_mms_summaries_success", putDebugValue(buildMessageQueryLogDetails(options), "elapsedMs", System.currentTimeMillis() - startedAt)
+      .put("summaryCount", summaries.size()));
+    return summaries;
+  }
+
+  private JSONObject hydrateMessageSummary(MessageSummary summary, JSONObject options) throws JSONException {
+    JSONObject row;
+    long startedAt;
+
+    if (summary == null) {
+      return null;
+    }
+
+    startedAt = System.currentTimeMillis();
+    addDebugLog("list_messages_hydrate_start", new JSONObject()
+      .put("kind", summary.kind)
+      .put("providerId", summary.providerId)
+      .put("threadKey", safeString(options == null ? "" : options.opt("threadKey"))));
+
+    row = querySingleMessage(summary.kind, summary.providerId);
+    addDebugLog("list_messages_hydrate_success", new JSONObject()
+      .put("kind", summary.kind)
+      .put("providerId", summary.providerId)
+      .put("elapsedMs", System.currentTimeMillis() - startedAt)
+      .put("found", row != null));
+    return row;
+  }
+
+  private void sortMessageSummaries(List<MessageSummary> items, final String order) {
+    Collections.sort(items, new Comparator<MessageSummary>() {
+      @Override
+      public int compare(MessageSummary left, MessageSummary right) {
+        if ("desc".equalsIgnoreCase(order)) {
+          return compareLong(right.sortDate, left.sortDate);
+        }
+
+        return compareLong(left.sortDate, right.sortDate);
+      }
+    });
   }
 
   private JSONObject buildThreadDetails(String threadKey, JSONObject options) throws JSONException {
@@ -3750,13 +4078,7 @@ public class Sms extends CordovaPlugin {
       selectionArgs = new String[] { String.valueOf(threadId) };
     }
 
-    cursor = resolver.query(
-      Telephony.Sms.CONTENT_URI,
-      new String[] { "_id", "thread_id", "address", "body", "date", "date_sent", "type", "read", "status" },
-      selection,
-      selectionArgs,
-      getProviderMessageSortOrder(options == null ? new JSONObject() : options)
-    );
+    cursor = querySmsCursor(threadId, options, new String[] { "_id", "thread_id", "address", "body", "date", "date_sent", "type", "read", "status" });
 
     if (cursor == null) {
       return messages;
@@ -3811,13 +4133,7 @@ public class Sms extends CordovaPlugin {
       selectionArgs = new String[] { String.valueOf(threadId) };
     }
 
-    cursor = resolver.query(
-      Uri.parse("content://mms"),
-      new String[] { "_id", "thread_id", "date", "date_sent", "msg_box", "read", "sub" },
-      selection,
-      selectionArgs,
-      getProviderMessageSortOrder(options == null ? new JSONObject() : options)
-    );
+    cursor = queryMmsCursor(threadId, options, new String[] { "_id", "thread_id", "date", "date_sent", "msg_box", "read", "sub" });
 
     if (cursor == null) {
       return messages;
@@ -3899,6 +4215,7 @@ public class Sms extends CordovaPlugin {
     int msgBox;
 
     messageId = cursor.getLong(cursor.getColumnIndex("_id"));
+    addDebugLog("list_messages_mms_row_start", new JSONObject().put("providerId", messageId));
     messageThreadId = cursor.getLong(cursor.getColumnIndex("thread_id"));
     date = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date")));
     dateSent = normalizeMmsTimestamp(cursor.getLong(cursor.getColumnIndex("date_sent")));
@@ -3925,6 +4242,10 @@ public class Sms extends CordovaPlugin {
     row.put("direction", msgBox == 1 ? "incoming" : "outgoing");
     row.put("box", msgBox);
     row.put("read", cursor.getInt(cursor.getColumnIndex("read")) == 1);
+    addDebugLog("list_messages_mms_row_success", new JSONObject()
+      .put("providerId", messageId)
+      .put("threadKey", String.valueOf(messageThreadId))
+      .put("attachmentCount", row.optInt("attachmentCount", 0)));
     return row;
   }
 
@@ -3982,6 +4303,7 @@ public class Sms extends CordovaPlugin {
     attachments = new JSONArray();
     bodyBuilder = new StringBuilder();
 
+    addDebugLog("list_messages_mms_parts_start", new JSONObject().put("providerId", messageId));
     cursor = resolver.query(
       Uri.parse("content://mms/part"),
       new String[] { "_id", "ct", "name", "fn", "cl", "text", "_data" },
@@ -3993,6 +4315,7 @@ public class Sms extends CordovaPlugin {
     if (cursor == null) {
       result.put("body", "");
       result.put("attachments", attachments);
+      addDebugLog("list_messages_mms_parts_null_cursor", new JSONObject().put("providerId", messageId));
       return result;
     }
 
@@ -4048,6 +4371,10 @@ public class Sms extends CordovaPlugin {
 
     result.put("body", bodyBuilder.toString());
     result.put("attachments", attachments);
+    addDebugLog("list_messages_mms_parts_success", new JSONObject()
+      .put("providerId", messageId)
+      .put("attachmentCount", attachments.length())
+      .put("hasBody", bodyBuilder.length() > 0));
     return result;
   }
 
@@ -4061,6 +4388,7 @@ public class Sms extends CordovaPlugin {
     unique = new LinkedHashSet<String>();
     result = new JSONArray();
 
+    addDebugLog("list_messages_mms_addresses_start", new JSONObject().put("providerId", messageId));
     cursor = resolver.query(
       Uri.parse("content://mms/" + messageId + "/addr"),
       new String[] { "address", "type" },
@@ -4070,6 +4398,7 @@ public class Sms extends CordovaPlugin {
     );
 
     if (cursor == null) {
+      addDebugLog("list_messages_mms_addresses_null_cursor", new JSONObject().put("providerId", messageId));
       return result;
     }
 
@@ -4092,6 +4421,9 @@ public class Sms extends CordovaPlugin {
       result.put(value);
     }
 
+    addDebugLog("list_messages_mms_addresses_success", new JSONObject()
+      .put("providerId", messageId)
+      .put("addressCount", result.length()));
     return result;
   }
 
@@ -5730,6 +6062,18 @@ public class Sms extends CordovaPlugin {
       this.providerId = providerId;
       this.messageId = messageId;
       this.uri = uri;
+    }
+  }
+
+  private static final class MessageSummary {
+    private final String kind;
+    private final long providerId;
+    private final long sortDate;
+
+    private MessageSummary(String kind, long providerId, long sortDate) {
+      this.kind = kind;
+      this.providerId = providerId;
+      this.sortDate = sortDate;
     }
   }
 }
