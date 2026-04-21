@@ -3447,6 +3447,7 @@ public class Sms extends CordovaPlugin {
     ArrayList<MessageSummary> summaries;
     ArrayList<JSONObject> items;
     List<MessageSummary> page;
+    HashMap<Long, JSONObject> mmsPartsById;
     long threadId;
     int offset;
     int limit;
@@ -3486,12 +3487,13 @@ public class Sms extends CordovaPlugin {
       .put("fromIndex", fromIndex)
       .put("toIndex", toIndex));
 
+    mmsPartsById = loadMmsPartsForSummaries(page, options);
     for (index = 0; index < page.size(); index++) {
       JSONObject row;
       MessageSummary summary;
 
       summary = page.get(index);
-      row = hydrateMessageSummary(summary, options);
+      row = hydrateMessageSummary(summary, options, mmsPartsById.get(Long.valueOf(summary.providerId)));
       if (row != null) {
         items.add(row);
       }
@@ -3748,6 +3750,10 @@ public class Sms extends CordovaPlugin {
   }
 
   private JSONObject hydrateMessageSummary(MessageSummary summary, JSONObject options) throws JSONException {
+    return hydrateMessageSummary(summary, options, null);
+  }
+
+  private JSONObject hydrateMessageSummary(MessageSummary summary, JSONObject options, JSONObject preloadedMmsParts) throws JSONException {
     JSONObject row;
     long startedAt;
 
@@ -3764,10 +3770,11 @@ public class Sms extends CordovaPlugin {
     }
 
     if ("mms".equals(summary.kind) && summary.hasMmsFields) {
-      row = buildMmsRow(summary, options);
+      row = preloadedMmsParts == null ? buildMmsRow(summary, options) : buildMmsRow(summary, preloadedMmsParts, options);
       addDebugLog("list_messages_hydrate_success", putDebugValue(buildMessageOperationLogDetails(options, summary.kind, summary.providerId), "elapsedMs", System.currentTimeMillis() - startedAt)
         .put("found", row != null)
-        .put("cachedRowFields", true));
+        .put("cachedRowFields", true)
+        .put("preloadedParts", preloadedMmsParts != null));
       return row;
     }
 
@@ -4296,7 +4303,25 @@ public class Sms extends CordovaPlugin {
     );
   }
 
+  private JSONObject buildMmsRow(MessageSummary summary, JSONObject textAndAttachments, JSONObject options) throws JSONException {
+    return buildMmsRow(
+      summary.providerId,
+      summary.mmsThreadId,
+      summary.mmsDate,
+      summary.mmsDateSent,
+      summary.mmsMsgBox,
+      summary.mmsRead,
+      summary.mmsSubject,
+      textAndAttachments,
+      options
+    );
+  }
+
   private JSONObject buildMmsRow(long messageId, long messageThreadId, long date, long dateSent, int msgBox, boolean read, String subject, JSONObject options) throws JSONException {
+    return buildMmsRow(messageId, messageThreadId, date, dateSent, msgBox, read, subject, null, options);
+  }
+
+  private JSONObject buildMmsRow(long messageId, long messageThreadId, long date, long dateSent, int msgBox, boolean read, String subject, JSONObject preloadedParts, JSONObject options) throws JSONException {
     JSONObject row;
     JSONObject textAndAttachments;
     JSONArray addresses;
@@ -4308,7 +4333,7 @@ public class Sms extends CordovaPlugin {
       addDebugLog("list_messages_mms_row_fields_success", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "threadKey", String.valueOf(messageThreadId)));
 
       addDebugLog("list_messages_mms_row_parts_before", buildMessageOperationLogDetails(options, "mms", messageId));
-      textAndAttachments = loadMmsParts(messageId, options);
+      textAndAttachments = preloadedParts == null ? loadMmsParts(messageId, options) : preloadedParts;
       addDebugLog("list_messages_mms_row_parts_after", putDebugValue(buildMessageOperationLogDetails(options, "mms", messageId), "attachmentCount", textAndAttachments.optJSONArray("attachments") == null ? 0 : textAndAttachments.optJSONArray("attachments").length()));
 
       if (options != null && options.optBoolean("skipMmsAddresses", false)) {
@@ -4417,16 +4442,109 @@ public class Sms extends CordovaPlugin {
     return loadMmsParts(messageId, null);
   }
 
+  private HashMap<Long, JSONObject> loadMmsPartsForSummaries(List<MessageSummary> summaries, JSONObject options) throws JSONException {
+    HashMap<Long, JSONObject> result;
+    HashMap<Long, StringBuilder> bodyBuilders;
+    ArrayList<String> selectionParts;
+    ArrayList<String> selectionArgs;
+    ContentResolver resolver;
+    Cursor cursor;
+    long startedAt;
+    int index;
+    int partCount;
+
+    result = new HashMap<Long, JSONObject>();
+    bodyBuilders = new HashMap<Long, StringBuilder>();
+    selectionParts = new ArrayList<String>();
+    selectionArgs = new ArrayList<String>();
+    for (index = 0; summaries != null && index < summaries.size(); index++) {
+      MessageSummary summary;
+      Long key;
+
+      summary = summaries.get(index);
+      if (summary == null || !"mms".equals(summary.kind)) {
+        continue;
+      }
+
+      key = Long.valueOf(summary.providerId);
+      if (result.containsKey(key)) {
+        continue;
+      }
+
+      result.put(key, createEmptyMmsPartsResult());
+      bodyBuilders.put(key, new StringBuilder());
+      selectionParts.add("?");
+      selectionArgs.add(String.valueOf(summary.providerId));
+    }
+
+    if (result.size() == 0) {
+      return result;
+    }
+
+    startedAt = System.currentTimeMillis();
+    partCount = 0;
+    addDebugLog("list_messages_mms_parts_batch_start", putDebugValue(buildMessageQueryLogDetails(options), "messageCount", result.size()));
+    resolver = cordova.getActivity().getContentResolver();
+    cursor = resolver.query(
+      Uri.parse("content://mms/part"),
+      new String[] { "_id", "mid", "ct", "name", "fn", "cl", "text", "_data" },
+      "mid IN (" + TextUtils.join(",", selectionParts) + ")",
+      selectionArgs.toArray(new String[selectionArgs.size()]),
+      null
+    );
+
+    if (cursor == null) {
+      addDebugLog("list_messages_mms_parts_batch_null_cursor", putDebugValue(buildMessageQueryLogDetails(options), "messageCount", result.size()));
+      return result;
+    }
+
+    try {
+      while (cursor.moveToNext()) {
+        Long key;
+        JSONObject parts;
+        StringBuilder bodyBuilder;
+
+        key = Long.valueOf(cursor.getLong(cursor.getColumnIndex("mid")));
+        parts = result.get(key);
+        bodyBuilder = bodyBuilders.get(key);
+        if (parts == null || bodyBuilder == null) {
+          continue;
+        }
+
+        appendMmsPart(cursor, parts, bodyBuilder);
+        partCount++;
+      }
+    } finally {
+      cursor.close();
+    }
+
+    for (Long key : result.keySet()) {
+      result.get(key).put("body", bodyBuilders.get(key).toString());
+    }
+
+    addDebugLog("list_messages_mms_parts_batch_success", putDebugValue(buildMessageQueryLogDetails(options), "elapsedMs", System.currentTimeMillis() - startedAt)
+      .put("messageCount", result.size())
+      .put("partCount", partCount));
+    return result;
+  }
+
+  private JSONObject createEmptyMmsPartsResult() throws JSONException {
+    JSONObject result;
+
+    result = new JSONObject();
+    result.put("body", "");
+    result.put("attachments", new JSONArray());
+    return result;
+  }
+
   private JSONObject loadMmsParts(long messageId, JSONObject options) throws JSONException {
     ContentResolver resolver;
     Cursor cursor;
     JSONObject result;
-    JSONArray attachments;
     StringBuilder bodyBuilder;
 
     resolver = cordova.getActivity().getContentResolver();
-    result = new JSONObject();
-    attachments = new JSONArray();
+    result = createEmptyMmsPartsResult();
     bodyBuilder = new StringBuilder();
 
     addDebugLog("list_messages_mms_parts_start", buildMessageOperationLogDetails(options, "mms", messageId));
@@ -4439,68 +4557,76 @@ public class Sms extends CordovaPlugin {
     );
 
     if (cursor == null) {
-      result.put("body", "");
-      result.put("attachments", attachments);
       addDebugLog("list_messages_mms_parts_null_cursor", buildMessageOperationLogDetails(options, "mms", messageId));
       return result;
     }
 
     try {
       while (cursor.moveToNext()) {
-        String partId;
-        String contentType;
-        String textValue;
-        String dataPath;
-
-        partId = safeString(cursor.getString(cursor.getColumnIndex("_id")));
-        contentType = safeString(cursor.getString(cursor.getColumnIndex("ct")));
-        textValue = safeString(cursor.getString(cursor.getColumnIndex("text")));
-        dataPath = safeString(cursor.getString(cursor.getColumnIndex("_data")));
-
-        if (contentType.startsWith("text/")) {
-          String bodyText;
-
-          bodyText = textValue;
-          if (TextUtils.isEmpty(bodyText) && !TextUtils.isEmpty(dataPath)) {
-            bodyText = readContentText(Uri.parse("content://mms/part/" + partId));
-          }
-
-          if (!TextUtils.isEmpty(bodyText)) {
-            if (bodyBuilder.length() > 0) {
-              bodyBuilder.append('\n');
-            }
-
-            bodyBuilder.append(bodyText);
-          }
-        } else if (!"application/smil".equals(contentType)) {
-          JSONObject attachment;
-          Uri uri;
-
-          uri = Uri.parse("content://mms/part/" + partId);
-          attachment = new JSONObject();
-          attachment.put("id", partId);
-          attachment.put("uri", uri.toString());
-          attachment.put("contentType", contentType);
-          attachment.put("name", firstNonEmpty(
-            cursor.getString(cursor.getColumnIndex("fn")),
-            cursor.getString(cursor.getColumnIndex("name")),
-            cursor.getString(cursor.getColumnIndex("cl")),
-            partId
-          ));
-          attachment.put("previewable", contentType.startsWith("image/"));
-          attachments.put(attachment);
-        }
+        appendMmsPart(cursor, result, bodyBuilder);
       }
     } finally {
       cursor.close();
     }
 
     result.put("body", bodyBuilder.toString());
-    result.put("attachments", attachments);
     addDebugLog("list_messages_mms_parts_success", buildMessageOperationLogDetails(options, "mms", messageId)
-      .put("attachmentCount", attachments.length())
+      .put("attachmentCount", result.optJSONArray("attachments") == null ? 0 : result.optJSONArray("attachments").length())
       .put("hasBody", bodyBuilder.length() > 0));
     return result;
+  }
+
+  private void appendMmsPart(Cursor cursor, JSONObject result, StringBuilder bodyBuilder) throws JSONException {
+    JSONArray attachments;
+    String partId;
+    String contentType;
+    String textValue;
+    String dataPath;
+
+    attachments = result.optJSONArray("attachments");
+    if (attachments == null) {
+      attachments = new JSONArray();
+      result.put("attachments", attachments);
+    }
+
+    partId = safeString(cursor.getString(cursor.getColumnIndex("_id")));
+    contentType = safeString(cursor.getString(cursor.getColumnIndex("ct")));
+    textValue = safeString(cursor.getString(cursor.getColumnIndex("text")));
+    dataPath = safeString(cursor.getString(cursor.getColumnIndex("_data")));
+
+    if (contentType.startsWith("text/")) {
+      String bodyText;
+
+      bodyText = textValue;
+      if (TextUtils.isEmpty(bodyText) && !TextUtils.isEmpty(dataPath)) {
+        bodyText = readContentText(Uri.parse("content://mms/part/" + partId));
+      }
+
+      if (!TextUtils.isEmpty(bodyText)) {
+        if (bodyBuilder.length() > 0) {
+          bodyBuilder.append('\n');
+        }
+
+        bodyBuilder.append(bodyText);
+      }
+    } else if (!"application/smil".equals(contentType)) {
+      JSONObject attachment;
+      Uri uri;
+
+      uri = Uri.parse("content://mms/part/" + partId);
+      attachment = new JSONObject();
+      attachment.put("id", partId);
+      attachment.put("uri", uri.toString());
+      attachment.put("contentType", contentType);
+      attachment.put("name", firstNonEmpty(
+        cursor.getString(cursor.getColumnIndex("fn")),
+        cursor.getString(cursor.getColumnIndex("name")),
+        cursor.getString(cursor.getColumnIndex("cl")),
+        partId
+      ));
+      attachment.put("previewable", contentType.startsWith("image/"));
+      attachments.put(attachment);
+    }
   }
 
   private JSONArray loadMmsAddresses(long messageId) throws JSONException {
