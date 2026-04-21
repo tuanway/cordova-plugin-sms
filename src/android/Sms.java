@@ -3554,6 +3554,7 @@ public class Sms extends CordovaPlugin {
     putDebugValue(details, "kind", safeString(options.opt("kind")));
     putDebugValue(details, "debugRequestId", safeString(options.opt("debugRequestId")));
     putDebugValue(details, "resolveContacts", options.optBoolean("resolveContacts", false));
+    putDebugValue(details, "skipMmsAddresses", options.optBoolean("skipMmsAddresses", false));
     return details;
   }
 
